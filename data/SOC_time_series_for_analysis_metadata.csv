@@ -1,0 +1,25 @@
+﻿Variable,Unit,Description
+siteID,string,"site level identifier, unique to each site"
+plotID,string,"plot level identifier, unique to each plot (time series). One site can have multiple plots"
+profileID,string,"profile level identifier, unique to each soil profile measured at one time. One plot contains at least two soil profiles (measured at different times). Each row represents one unique soil profile"
+lat,decimal degree,latitude soil sampling location
+long,decimal degree,longitude of soil sampling location
+observation_year,year,year of soil sampling
+SOC_stock30,Mg C/ha,cumulative soil organic carbon (SOC) stock at top 30 cm
+SOC_stock30_log,log(Mg C/ha),natural logarithm of SOC_stock30
+abs30_rate_mgha_yr,Mg C/(ha-yr),"annual rate of change in top 30 cm SOC stock calculated from this row and initial observation of this plot. If this row is the initial observartion, the rate is ""NA"""
+MAT_cru,celsius degree,mean annual temperature in the year of observation extracted from the Climatic Research Unit gridded Time Series (CRU TS)
+MAP_cru,mm,mean annual precipitation in the year of observation extracted from the Climatic Research Unit gridded Time Series (CRU TS)
+forest_cond_gf_besnard60,string,"Land cover type divided into young forest, old forest, and grassland. Young and old forests were divided by 60 years stand age at initial observation year. Forest age was collected from source or gap-filled by the World Forest Age Map be Besnard et al. 2021 (https://doi.org/10.5194/essd-13-4881-2021)."
+n_pct_plo,%,plot-level average of soil nitrogen content
+clay_plo,%,plot-level average of soil clay content
+ph_plo,pH,plot-level average of soil pH
+mean_mat_site,celsius degree,average mean annual temperature from the first to last year of observation (used to plot data distribution on Whittaker plot)
+mean_map_site,mm,average mean annual precipitation from the first to last year of observation (used to plot data distribution on Whittaker plot)
+forest_age_gapfill,Boolean,"TRUE or FALSE for forest, NA for grassland. Indicates whether young vs. old forest grouping is based on gap-filled forest age. if TRUE, forest age is gap-filled from World Forest Age Map. If FALSE, forest age is from data source."
+std_MAT_cru,dimensionless,standardized values of MAT_cru. Calculated by (MAT_cru value - column mean of MAT_cru) / colum standard deviation of MAT_cru
+std_MAP_cru,dimensionless,standardized values of MAP_cru. See std_MAT_cru for calculation details.
+std_year,dimensionless,standardized values of observation_year. See std_MAT_cru for calculation details.
+std_n_pct_plo,dimensionless,standardized values of n_pct_plo. See std_MAT_cru for calculation details.
+std_clay_plo,dimensionless,standardized values of clay_plo. See std_MAT_cru for calculation details.
+std_ph_plo,dimensionless,standardized values of ph_plo. See std_MAT_cru for calculation details.
