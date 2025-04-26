@@ -9,17 +9,18 @@ Large files such as spatial data and intermediate results are not saved in this 
 All scripts were run in R Version 4.3.2
 
 
+<<<<<<< HEAD
 ## “data” folder contains
 
 - region_division_df.rda
 	- Dataframe with region division modified from Pan et al. (2024). It was used to generate proportion_decade_df.rda
  	- Each row contains centered latitude, centered longitude, and the region name of a 0.5 degree pixel.
 
-- SOC_time_series_database.rda
+- SOC_time_series_database.rda (will be published with manuscript)
 	- The complete database of SOC time series without processing and cleaning. It is generated in 01_process_input_data.R
 	- Description in SOC_time_series_database_metadata.csv
 
-- SOC_time_series_for_analysis.rda
+- SOC_time_series_for_analysis.rda (will be published with manuscript)
 	- Processed dataset used for analysis of this manuscript
 	- Description in SOC_time_series_for_analysis_metadata.csv
 
@@ -64,4 +65,3 @@ All scripts were run in R Version 4.3.2
 
 - Tables_all.R
 	- Script that generates all main and supplementary tables
-
