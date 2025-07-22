@@ -4,3 +4,5 @@
 .Ruserdata
 .DS_Store
 SOCTimeSeries.Rproj
+SOC_time_series_database.rda
+SOC_time_series_for_analysis.rda
