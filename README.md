@@ -9,7 +9,6 @@ Large files such as spatial data and intermediate results are not saved in this 
 All scripts were run in R Version 4.3.2
 
 
-<<<<<<< HEAD
 ## “data” folder contains
 
 - region_division_df.rda
