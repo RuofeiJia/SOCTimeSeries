@@ -4,7 +4,7 @@
 .Ruserdata
 .DS_Store
 .Rapp.history
-.SOCTimeSeries.Rproj
-.SOC_time_series_database.rda
-.SOC_time_series_for_analysis.rda
-.SOC_time_series_database_metadata.csv
+SOCTimeSeries.Rproj
+data/SOC_time_series_database.rda
+data/SOC_time_series_for_analysis.rda
+data/SOC_time_series_database_metadata.csv
