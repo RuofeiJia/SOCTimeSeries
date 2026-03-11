@@ -16,58 +16,25 @@ library(scico)
 library(ggtext)
 library(patchwork)
 library(gghighlight)
+library(tictoc)
 
 # working directory should be set by default to the folder of entire repo (R project)
 
 # load data (object name: df_std)
-load("./data/SOC_time_series_for_analysis.rda")
+load("./data/SOC_withNewData_for_analysis.rda")
+df_std <- df_std_withNewData; rm(df_std_withNewData)
+
 # load input layers
-load("./results/prediction_inputs.rda")
+load("./results/predicted_inputs_brms1_37k12chain.rda")
 # load land use proportion
 load("./data/proportion_decade_df.rda")
 # load model
-load("./results/gamm_brms12.rda")
-gamm_brms <- gamm_brms12
-
-# assign climate zone to regions
-boreal_regions <- c("Canada","Northern Europe","Asian Russia","European Russia", "Alaska")
-temperate_regions <- c("Continental United States", "Europe", "China", "Japan and Korea", "Australia", 
-                       "New Zealand", "Other temperate", "Others")
-tropical_regions <- c("Africa", "Mexico and Central America", "South America", "Southeast Asia", "South Asia")
-
-# add proportion column to input layers 
-input_youngforest1990_first_p <- merge(input_youngforest1990_first, 
-                                       proportion_decade_df[,c("x","y","avg_youngforest1992_2020","pan_region_new2")],
-                                       by=c("x","y"), all.x=T) %>%
-  dplyr::rename(proportion=avg_youngforest1992_2020)
-
-input_oldforest1990_first_p <- merge(input_oldforest1990_first, 
-                                     proportion_decade_df[,c("x","y","avg_oldforest1992_2020","pan_region_new2")],
-                                     by=c("x","y"), all.x=T) %>%
-  dplyr::rename(proportion=avg_oldforest1992_2020)
-
-input_grassland1990_first_p <- merge(input_grassland1990_first, 
-                                     proportion_decade_df[, c("x","y","grassland1992_2020","pan_region_new2")],
-                                     by=c("x","y"), all.x=T) %>%
-  dplyr::rename(proportion=grassland1992_2020)
-
-# add region and biome to input layers
-pred_conditions <- rbind(input_youngforest1990_first_p,input_oldforest1990_first_p,
-                         input_grassland1990_first_p#, input_shrubland2010_first_p
-                         ) %>%
-  filter(proportion>0) %>% # keep only pixels with certain land cover type
-  filter(!is.na(pan_region_new2)&pan_region_new2!="Others" ) %>%
-  mutate(zone = case_when(
-    pan_region_new2 %in% boreal_regions ~ "boreal",
-    pan_region_new2 %in% temperate_regions ~ "temperate",
-    pan_region_new2 %in% tropical_regions ~ "tropical"
-  )) %>%
-  mutate(cond_biome = paste0(zone, " ", forest_cond_gf_besnard60))
+load("./results/brms1_timeseries_37k12chain.rda")
 
 # define color
 my_palette_zone <- 
   c(
-    "tropical" = "darkgray", #"#e1a5d7",
+    "tropical" = "darkgray",
     "temperate" = "#913f99",
     "boreal" = "#46559e"
   )
@@ -78,6 +45,33 @@ custom_labels <- c(
   "old forest" = "Old forest",
   "grassland" = "Grassland"
 )
+
+# dataframe for panel tags
+facet_labels <- data.frame(
+  forest_cond_gf_besnard60 = unique(mod_pred$forest_cond_gf_besnard60),
+  label = c("A", "B", "C"),  # Adjust based on number of facets
+  year = 1992,  # Adjust X position
+  mean_change = 75# 45  # Adjust Y position for visibility
+)
+
+gamm_brms <- brms1; rm(brms1)
+
+# assign climate zone to regions
+boreal_regions <- c("Canada","Northern Europe","Asian Russia","European Russia", "Alaska")
+temperate_regions <- c("Continental United States", "Europe", "China", "Japan and Korea", "Australia", 
+                       "New Zealand", "Other temperate", "Others")
+tropical_regions <- c("Africa", "Mexico and Central America", "South America", "Southeast Asia", "South Asia")
+
+# add region and biome to input layers
+pred_conditions <- rbind(input_youngforest_pred,input_oldforest_pred,
+                         input_grassland_pred) %>%
+  filter(!is.na(pan_region_new2)&pan_region_new2!="Others" ) %>%
+  mutate(zone = case_when(
+    pan_region_new2 %in% boreal_regions ~ "boreal",
+    pan_region_new2 %in% temperate_regions ~ "temperate",
+    pan_region_new2 %in% tropical_regions ~ "tropical"
+  )) %>%
+  mutate(cond_biome = paste0(zone, " ", forest_cond_gf_besnard60))
 
 # Function to create the dataset for visualization using brms model
 create_dataset_brms <- function(mod, df, cond_name = "cond_biome", year_lim=c(1992,2020)) {
@@ -101,14 +95,13 @@ create_dataset_brms <- function(mod, df, cond_name = "cond_biome", year_lim=c(19
         std_clay_plo = weighted.mean(df_cond$std_clay_plo, df_cond$proportion, na.rm = TRUE),
         std_n_pct_plo = weighted.mean(df_cond$std_n_pct_plo, df_cond$proportion, na.rm = TRUE),
         std_ph_plo = weighted.mean(df_cond$std_ph_plo, df_cond$proportion, na.rm=TRUE),
-        std_elev_plo = weighted.mean(df_cond$std_elev_plo, df_cond$proportion, na.rm = TRUE),
         siteID = 0,
         plotID = 0,
         cond_biome = cond_str,
         zone = unique(df_cond$zone)) %>% 
-        mutate(std_MAT_cru = (MAT_cru - mean(df_std$MAT_cru)) / sd(df_std$MAT_cru),
-               std_MAP_cru = (MAP_cru - mean(df_std$MAP_cru)) / sd(df_std$MAP_cru),
-               std_year = (year - mean(df_std$observation_year)) / sd(df_std$observation_year)
+        dplyr::mutate(std_MAT_cru = (MAT_cru - mean(df_std$MAT_cru)) / sd(df_std$MAT_cru),
+                      std_MAP_cru = (MAP_cru - mean(df_std$MAP_cru)) / sd(df_std$MAP_cru),
+                      std_year = (year - mean(df_std$observation_year)) / sd(df_std$observation_year)
         )
       
       # Generate predictions using posterior_epred
@@ -132,27 +125,25 @@ create_dataset_brms <- function(mod, df, cond_name = "cond_biome", year_lim=c(19
       mod_pred <- rbind(mod_pred, temp_mod_pred)
     }
   }
+  # Error: vector memory exhausted (limit reached?)
   
   mod_pred$forest_cond_gf_besnard60 <- factor(mod_pred$forest_cond_gf_besnard60, levels =c("young forest", "old forest","grassland","shrubland"))
   mod_pred$cond_biome <- factor(mod_pred$cond_biome, levels = c("tropical young forest","temperate young forest","boreal young forest", 
                                                                 "tropical old forest","temperate old forest", "boreal old forest",
                                                                 "tropical grassland","temperate grassland", "boreal grassland"
-                                                               ))
+  ))
   mod_pred$zone <- factor(mod_pred$zone, levels = c("tropical","temperate","boreal"))
   
   return(mod_pred)
 }
 
+print("start: generate mod_pred"); tic()
 # Generate the dataset
+tic()
 mod_pred <- create_dataset_brms(gamm_brms, pred_conditions)
+toc()
 
-# dataframe for panel tags
-facet_labels <- data.frame(
-  forest_cond_gf_besnard60 = unique(mod_pred$forest_cond_gf_besnard60),
-  label = c("A", "B", "C"),  # Adjust based on number of facets
-  year = 1992,  # Adjust X position
-  mean_change = 45  # Adjust Y position for visibility
-)
+print("done: generate mod_pred"); toc()
 
 ###### plot data
 # set theme
@@ -162,18 +153,19 @@ theme_set(theme_minimal(base_family = "Helvetica", base_size = 12))
 #Plot the data using ggplot (reuse the ggplot code with mod_pred)
 pgam_brms <- ggplot() +
   geom_hline(yintercept = 0, linetype = "solid", size = .25) +
-  geom_line(data = mod_pred[!grepl("boreal shrubland", mod_pred$cond_biome),],
+  geom_line(data = mod_pred[!grepl("shrubland", mod_pred$cond_biome),],
             aes(x = year, y = mean_change, color = zone), size = 0.75) +
-  geom_ribbon(data = mod_pred[!grepl("boreal shrubland", mod_pred$cond_biome),],
+  geom_ribbon(data = mod_pred[!grepl("shrubland", mod_pred$cond_biome),],
               aes(ymin = change_lowCI, ymax = change_highCI, x = year, group = cond_biome, fill = zone),
               alpha = 0.3, color = NA, linetype = 0) +
   scale_fill_manual(values = my_palette_zone, labels = str_to_title(levels(mod_pred$zone))) +
   scale_color_manual(values = my_palette_zone, labels = str_to_title(levels(mod_pred$zone))) +
-  ylab("0-30cm SOC stock change (Mg C/ha)") + xlab("Year") +
+  ylab("Cumulative SOC density change (Mg C/ha)") + xlab("Year") +
   facet_wrap(~ forest_cond_gf_besnard60, ncol=3, labeller = labeller(forest_cond_gf_besnard60 = custom_labels)) +
   coord_cartesian(clip = "off") +
-  scale_y_continuous(labels = c(-25,0,25), 
-                     breaks=c(-25,0,25), limits = c(-27,45)) + 
+  # # uncomment the following line to plot Fig. S14
+  # scale_y_continuous(limits = c(-40,55)) +
+  scale_x_continuous(breaks = c(1992, 2000, 2010, 2020)) +
   theme_minimal() +
   theme(
     axis.ticks = element_blank(),
@@ -185,8 +177,8 @@ pgam_brms <- ggplot() +
     legend.title = element_blank(),
     legend.position="bottom") +
   guides(fill = guide_legend(title = NULL, nrow = 1, byrow = TRUE),
-         color = guide_legend(title = NULL, nrow = 1, byrow = TRUE)) + 
-  geom_text(data = facet_labels, aes(x = year, y = mean_change, label = label), 
+         color = guide_legend(title = NULL, nrow = 1, byrow = TRUE)) +
+  geom_text(data = facet_labels, aes(x = year, y = mean_change, label = label),
             hjust = 0, vjust = 1, size = 10/.pt, fontface = "bold")
 
 showtext_auto(FALSE)
@@ -194,7 +186,10 @@ showtext_auto(FALSE)
 # Display the plot
 print(pgam_brms)
 # Save the figure with maximum quality for a double column width
-ggsave("./Figure1.png", plot = pgam_brms, 
+# ggsave("./Figure1.png", plot = pgam_brms,
+#        bg = "white", dpi = 600, width = 183 / 25.4, height = 80 / 25.4, units = "in")
+
+ggsave("./figures/Figure1.png", plot = pgam_brms,
        bg = "white", dpi = 600, width = 183 / 25.4, height = 80 / 25.4, units = "in")
 
 

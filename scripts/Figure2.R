@@ -1,4 +1,4 @@
-# Figure 2: regional estimates and relave uncertainty
+# Figure 2: regional estimates and uncertainty
 rm(list = ls(all = TRUE))
 
 # package and direcotry
@@ -19,14 +19,17 @@ library(patchwork)
 # working directory should be set by default to the folder of entire repo (R project)
 
 # load proportion_decade_df
+#load("./data/proportion_decade_df.rda")
 load("./data/proportion_decade_df.rda")
 # load prediction results
-load("./results/upscaled_regional_summary.RData")
+#load("./results/upscaled_regional_summary.RData")
+load("./results/find_CI_bayesian_cap2_exclude_same_extent.RData")
 
 # load countries boundary
 # # load world administrative boundaries (see 00_download_prepare_spatial_data.R)
 # # https://public.opendatasoft.com/explore/dataset/world-administrative-boundaries/export/?flg=en-us
-countries_sf <- read_sf("./data/world-administrative-boundaries/world-administrative-boundaries.shp")
+#countries_sf <- read_sf("./data/world-administrative-boundaries/world-administrative-boundaries.shp")
+countries_sf <- read_sf("/Users/jiaruofei/MIT Dropbox/Ruofei Jia/maps/world-administrative-boundaries/world-administrative-boundaries.shp")
 countries_sf <- st_make_valid(countries_sf)
 countries_sf <- st_transform(countries_sf, 4326)
 
@@ -64,21 +67,65 @@ region_palette <- c(
   #NA = "gray"
 )
 
+reccap_palette <- c(
+  "Africa" = "#faf5d9",
+  "Europe" = "#f0cfde",
+  "North America" = "burlywood",
+  "Other" = "#ffebff",
+  "Russia" = "#e0dcc6",
+  "Australia" = "#fce4cf",
+  "South America" = "#defade",
+  "Southeast Asia" = "#e1f0c2",
+  "East Asia" = "#ffe4b3",
+  "South Asia" = "#f0eed5"
+)
  
 #-----------------Figure 2a base map ----------------------------
 # 3a: region base map. Will put regional estimates on top in illustrator
+
+# tried with reccap but decided not to use
+# regional_base <- ggplot() +
+#   #geom_sf(data=countries_sf, fill=NA, col=NA) + # plot background with sf
+#   # geom_tile(data=proportion_decade_df, aes(x=x, y=y), # plot background (greenland with tiles)
+#   #           color="gray",fill="gray", alpha=1) +
+#   geom_tile(data=proportion_decade_df[!is.na(proportion_decade_df$reccap_region),],
+#             aes(x=x, y=y, color=reccap_region, fill=reccap_region), alpha=1) +
+#   scale_fill_manual(values = reccap_palette) +
+#   scale_color_manual(values = reccap_palette) +
+#   labs(x=NULL, y=NULL,fill=NULL, tags="A") +
+#   # scale_x_continuous(expand=c(0,0)) +
+#   # scale_y_continuous(expand=c(0,0)) +
+#   coord_fixed() +
+#   theme_bw() +
+#   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+#         legend.position = "none",
+#         axis.title.x = element_blank(),  # Remove x-axis title
+#         axis.title.y = element_blank(),  # Remove y-axis title
+#         axis.text.x = element_blank(),    # Remove x-axis text
+#         axis.text.y = element_blank(),    # Remove y-axis text
+#         axis.ticks.x = element_blank(),   # Remove x-axis ticks
+#         axis.ticks.y = element_blank(),   # Remove y-axis ticks,
+#         panel.border = element_blank(),
+#         panel.background = element_rect(fill='white', color=NA),
+#         plot.background = element_rect(fill='white', color=NA),
+#         plot.tag = element_text(face = "bold",size = 10),
+#         plot.tag.position = c(0.01, 1),
+#         plot.margin=margin(0, 0, 0, 0)
+#   )
+
+
 regional_base <- ggplot() +
   #geom_sf(data=countries_sf, fill=NA, col=NA) + # plot background with sf
   # geom_tile(data=proportion_decade_df, aes(x=x, y=y), # plot background (greenland with tiles)
   #           color="gray",fill="gray", alpha=1) +
-  geom_tile(data=proportion_decade_df[!is.na(proportion_decade_df$pan_region_new2),], 
+  geom_tile(data=proportion_decade_df[!is.na(proportion_decade_df$pan_region_new2),],
             aes(x=x, y=y, color=pan_region_new2, fill=pan_region_new2), alpha=1) +
   scale_fill_manual(values = region_palette) +
   scale_color_manual(values = region_palette) +
-  labs(x=NULL, y=NULL,fill=NULL, tags="A") + 
-  # scale_x_continuous(expand=c(0,0)) + 
+  labs(x=NULL, y=NULL,fill=NULL, tags="A") +
+  # scale_x_continuous(expand=c(0,0)) +
   # scale_y_continuous(expand=c(0,0)) +
-  coord_fixed() + 
+  coord_fixed() +
   theme_bw() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
         legend.position = "none",
@@ -89,7 +136,7 @@ regional_base <- ggplot() +
         axis.ticks.x = element_blank(),   # Remove x-axis ticks
         axis.ticks.y = element_blank(),   # Remove y-axis ticks,
         panel.border = element_blank(),
-        panel.background = element_rect(fill='white', color=NA), 
+        panel.background = element_rect(fill='white', color=NA),
         plot.background = element_rect(fill='white', color=NA),
         plot.tag = element_text(face = "bold",size = 10),
         plot.tag.position = c(0.01, 1),
@@ -99,11 +146,11 @@ regional_base <- ggplot() +
 regional_base
 
 # save
-ggsave("./Fig2a_base.png", plot = regional_base, bg = "white", dpi = 600, width = 0.8*183 / 25.4, height = 60 / 25.4, units = "in")
+ggsave("./figures/Fig2a_base.png", plot = regional_base, bg = "white", dpi = 600, width = 0.8*183 / 25.4, height = 60 / 25.4, units = "in")
 
 
 #--------------------- 2b: uncertainty by latitude -----------------------------
-load("./results/upscaled_pixel_summary.RData")
+load("./results/find_CI_bayesian_cap2_exclude_same_extent_pixel_summary.RData")
 
 # set function that summarize pixel results by latitude as mean, sd, total
 sum_by_lat <- function(layer_df, var_name="se_annual", type_str="young forest") {
@@ -156,7 +203,7 @@ p_sd_latitude <- ggplot(sum_sd) +
 p_sd_latitude
 
 # save
-ggsave("./Fig2b_panel.png", plot = p_sd_latitude, bg = "white", dpi = 600, width = 0.2*183 / 25.4, height = 60 / 25.4, units = "in")
+ggsave("./figures/Fig2b_panel.png", plot = p_sd_latitude, bg = "white", dpi = 600, width = 0.2*183 / 25.4, height = 60 / 25.4, units = "in")
 
 #------------------------ Figure2 legend----------------------------------------
 # Create data frames for regions legend
@@ -258,32 +305,119 @@ regional_combined_bt_all_decades <- pan_region_CI %>%
   dplyr::mutate(across(annual_mean:annual_97.5, ~ .* 1000))# convert all unit from PgC/yr to TgC/yr
 
 # find ylim_val from max and min value of regional numbers
-min(regional_combined_bt_all_decades$annual_mean) # -104.5499
-max(regional_combined_bt_all_decades$annual_mean) # 736.0494
+min(regional_combined_bt_all_decades$annual_mean) # -24.12343
+max(regional_combined_bt_all_decades$annual_mean) # 341.8908
+min(regional_combined_bt_all_decades$annual_2.5) # -102.5584
+max(regional_combined_bt_all_decades$annual_97.5) # 466.8566
 
 # set theme
 theme_set(theme_minimal(base_family = "Helvetica", base_size = 7))
 
-# function that plots annual SOC change for each region (1992-2020)
+# # function that plots annual SOC change for each region (1992-2020) with error bar and region label
+# # to save, this, set width=1.2 or wider in ggsaves
+# plot_annualChange <- function(region_str="Africa", df=regional_combined_bt_all_decades, 
+#                               palette=type_palette, ylim_val=c(-120,420)) {
+#   # set df_region
+#   df_region <- df[df$pan_region_new2==region_str,]
+#   # find location for title (higher than highest error bar and number above bar)
+#   max_val <- max(max(df_region$annual_mean)+50, max(df_region$annual_97.5)) 
+#   
+#   # make region label
+#   region_label <- ifelse(grepl("Mexico", region_str), "Central America", region_str)
+#   
+#   p <- ggplot(df_region,
+#               aes(x = extent, y = annual_mean, fill=type)) +
+#     scale_fill_manual(values = palette) +
+#     #scale_color_manual(values = palette) +
+#     geom_bar(stat = "identity", position = "dodge", show.legend = F, width=0.9) +
+#     geom_text(aes(label = round(annual_mean,0), # add value numbers
+#                   y = annual_mean),
+#               position = position_dodge(width = 0.9),
+#               vjust = ifelse(df_region$annual_mean>0, -0.5, 1.5),
+#               size = 3) + # adjust size for printed text size
+#     geom_segment(aes(x = 1-0.45, # add black line in y=0
+#                      xend = 1+0.45,
+#                      y = 0,
+#                      yend = 0),
+#                  color = "black") +
+#     geom_errorbar(aes(ymin = annual_2.5, ymax = annual_97.5), 
+#     width = 0, position = position_dodge(0.9)) +
+#     # add region table
+#     # Add region label
+#     geom_text(aes(x = 1, #mean(as.numeric(extent)), 
+#                   y = max_val + 10 , vjust=0,
+#                   label = region_label),
+#               inherit.aes = FALSE, 
+#               size = 3) +
+#     labs(title = NULL, x = NULL, y =NULL) +
+#     #ylim(ylim_val) + 
+#     coord_cartesian(ylim = ylim_val, clip = "off") +
+#     theme(text = element_text(family = "Helvetica"),
+#           panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+#           panel.background = element_rect(fill='transparent', color=NA), 
+#           plot.background = element_rect(fill='transparent', color=NA),
+#           axis.line = element_blank(), axis.ticks=element_blank(),
+#           axis.text = element_blank(),
+#           plot.margin = margin(t = 5, r = 20, b = 5, l = 20, unit = "pt"))
+#   
+#   return(p)
+# }
+
+# # original one without error bar or region label
+# plot_annualChange <- function(region_str="Africa", df=regional_combined_bt_all_decades, 
+#                               palette=type_palette, ylim_val=c(-60,320)) {
+#   p <- ggplot(df[df$pan_region_new2==region_str,],
+#               aes(x = extent, y = annual_mean, fill=type)) +
+#     scale_fill_manual(values = palette) +
+#     geom_bar(stat = "identity", position = "dodge", show.legend = F) +
+#     geom_text(aes(label = round(annual_mean,0), # add value numbers
+#                   y = annual_mean),
+#               position = position_dodge(width = 0.9),
+#               vjust = ifelse(df[df$pan_region_new2 == region_str, ]$annual_mean > 0, -0.5, 1.5),
+#               size = 3) + # adjust size for printed text size
+#     geom_segment(aes(x = 1-0.45, # add black line in y=0
+#                      xend = 1+0.45,
+#                      y = 0,
+#                      yend = 0),
+#                  color = "black") +
+#     #geom_errorbar(aes(ymin = annual_2.5, ymax = annual_97.5), width = 0.2, position = position_dodge(0.9)) +
+#     labs(title = NULL, x = NULL, y =NULL) +
+#     ylim(ylim_val) + 
+#     theme(text = element_text(family = "Helvetica"),
+#           panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+#           panel.background = element_rect(fill='transparent', color=NA), 
+#           plot.background = element_rect(fill='transparent', color=NA),
+#           axis.line = element_blank(), axis.ticks=element_blank(),
+#           axis.text = element_blank())
+#   
+#   return(p)
+# }
+
+# function that plots annual SOC change for each region (1992-2020) with error bar
 plot_annualChange <- function(region_str="Africa", df=regional_combined_bt_all_decades, 
-                              palette=type_palette, ylim_val=c(-145,780)) {
-  p <- ggplot(df[df$pan_region_new2==region_str,],
+                              palette=type_palette, ylim_val=c(-120,485)) {
+  # set df_region
+  df_region <- df[df$pan_region_new2==region_str,]
+  p <- ggplot(df_region,
               aes(x = extent, y = annual_mean, fill=type)) +
     scale_fill_manual(values = palette) +
-    geom_bar(stat = "identity", position = "dodge", show.legend = F) +
+    #scale_color_manual(values = palette) +
+    geom_bar(stat = "identity", position = "dodge", show.legend = F, width=0.9) +
     geom_text(aes(label = round(annual_mean,0), # add value numbers
                   y = annual_mean),
               position = position_dodge(width = 0.9),
-              vjust = ifelse(df[df$pan_region_new2 == region_str, ]$annual_mean > 0, -0.5, 1.5),
+              vjust = ifelse(df_region$annual_mean>0, -0.5, 1.5),
               size = 3) + # adjust size for printed text size
     geom_segment(aes(x = 1-0.45, # add black line in y=0
                      xend = 1+0.45,
                      y = 0,
                      yend = 0),
                  color = "black") +
-    #geom_errorbar(aes(ymin = annual_2.5, ymax = annual_97.5), width = 0.2, position = position_dodge(0.9)) +
+    geom_errorbar(aes(ymin = annual_2.5, ymax = annual_97.5), 
+                  width = 0, position = position_dodge(0.9)) +
     labs(title = NULL, x = NULL, y =NULL) +
-    ylim(ylim_val) + 
+    #ylim(ylim_val) + 
+    coord_cartesian(ylim = ylim_val, clip = "off") +
     theme(text = element_text(family = "Helvetica"),
           panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
           panel.background = element_rect(fill='transparent', color=NA), 
@@ -317,23 +451,23 @@ change_southasia <- plot_annualChange("South Asia")
 change_southeastasia <- plot_annualChange("Southeast Asia")
 
 #
-ggsave("./Fig2_africa.png", change_africa, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_alaska.png", change_alaska, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_asianrussia.png", change_asianrussia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_australia.png", change_australia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_canada.png", change_canada, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_china.png", change_china, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_us.png", change_us, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_europe.png", change_europe, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_eurussia.png", change_eurussia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_japankorea.png", change_japankorea, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_mexico.png", change_mexico, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_nz.png", change_nz, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_northeu.png", change_northeu, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_othertemp.png", change_othertemp, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_others.png", change_others, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_southamerica.png", change_southamerica, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_southasia.png", change_southasia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./Fig2_southeastasia.png", change_southeastasia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_africa.png", change_africa, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_alaska.png", change_alaska, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_asianrussia.png", change_asianrussia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_australia.png", change_australia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_canada.png", change_canada, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_china.png", change_china, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_us.png", change_us, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_europe.png", change_europe, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_eurussia.png", change_eurussia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_japankorea.png", change_japankorea, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_mexico.png", change_mexico, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_nz.png", change_nz, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_northeu.png", change_northeu, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_othertemp.png", change_othertemp, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_others.png", change_others, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_southamerica.png", change_southamerica, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_southasia.png", change_southasia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
+ggsave("./figures/Fig2_southeastasia.png", change_southeastasia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
 
 # figure is assembled and exported in Powerpoint

@@ -950,8 +950,8 @@ df_lm_covariates <- df_adjusted_covariates %>%
     abs30_rate_mgha_yr = abs_diff_30/time_interval
   ) %>% dplyr::ungroup()
 
-# change land_cover names
-df_lm_covariates$land_cover <- ifelse(grepl("Bog|peatbogs", df_lm_covariates$land_cover), "bog", df_lm_covariates$land_cover)
+# # change land_cover names
+# df_lm_covariates$land_cover <- ifelse(grepl("Bog|peatbogs", df_lm_covariates$land_cover), "bog", df_lm_covariates$land_cover)
 
 # add factor to categorical columns
 df_lm_covariates$siteID <- factor(df_lm_covariates$siteID)
@@ -1000,8 +1000,8 @@ df_layer_gf <- merge(x=df_layer,
 # exclude the very ancient grassland obsin 1876
 df_gf <- df_gf %>% filter(observation_year>1900)
 
-# exclude water-saturated plots and shrubland plots
-df_gf <- df_gf %>% filter(!grepl("water-logged|marsh|bog|shrubland", land_cover)) %>%
+# exclude other land cover to only include only forest and grasslands
+df_gf <- df_gf %>% filter(land_cover %in% c("forest", "grassland")) %>%
   mutate(land_cover=factor(land_cover))
 
 unique(df_gf$land_cover)
@@ -1153,7 +1153,7 @@ df_model <- df_known_age %>%
 # add column of whether forest plot age is gapfilled
 df_std <- df_model %>%
   mutate(forest_age_gapfill = case_when(
-    grepl("grassland|shrubland", forest_cond_gf_besnard60) ~ NA, # if not forest, NA
+    grepl("grassland", forest_cond_gf_besnard60) ~ NA, # if not forest, NA
     siteID %in% c("L-AH-ECN", "L-DR-BF", "cnern-DHF", "cnern-ALF", "NEON-GUAN",
                   "NEON-JERC","NEON-OSBS","NEON-SCBI") ~ FALSE, # if assigned from srouce info, F
     forest_cond=="young forest" ~ FALSE,

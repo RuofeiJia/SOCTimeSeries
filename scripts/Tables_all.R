@@ -10,21 +10,21 @@ library(brms)
 
 #-------------------- load data ------------------------------------------------
 # load proportion_decade_df
+
 load("./data/proportion_decade_df.rda")
 # load prediction results
-load("./results/upscaled_regional_summary.RData")
+load("./results/find_CI_bayesian_cap2_exclude_same_extent.RData")
 # load statistical model
-load("./results/gamm_brms12.rda")
+load("./results/brms1_withOneTime_37k12chain.rda")
 
 # assign climate zone to regions
 boreal_regions <- c("Canada","Northern Europe","Asian Russia","European Russia", "Alaska")
 temperate_regions <- c("Continental United States", "Europe", "China", "Japan and Korea", "Australia", 
-                       "New Zealand", "Other temperate", "Others") # 
+                       "New Zealand", "Other temperate", "Others")
 tropical_regions <- c("Africa", "Mexico and Central America", "South America", "Southeast Asia", "South Asia")
 
 # set symbol to connect lower and upper credible intervals
 connect_symbol <- ","
-
 
 #------------------ Table 1: Total SOC changes by biome ------------------------
 # by biome
@@ -101,17 +101,129 @@ total_SOC_change_global <- pan_global_CI %>%
 
 # assemble
 total_SOC_change_table1 <- rbind(total_SOC_change_biome, total_SOC_change_type, total_SOC_change_global)
-#------------------ Tabl2 2: SOC sink and global carbon budget -----------------
-# this table was made manually.
-# SLAND_soil is calculated in script 04_upscale.R
-
 #------------------ Table S1: Summary of model coefficient estimates -----------
-fixed_coef <- as.data.frame(summary(gamm_brms12)$fixed) %>%
+fixed_coef <- as.data.frame(summary(brms1)$fixed) %>%
   mutate_at(1:7, round, 3) %>%
   dplyr::select(1:4)
 #------------------ Table S2: predictor values for trends in Fig1 --------------
 # Code for this table is in the script: Figure1.R
-#------------------ Table S3: Total SOC changes by region ----------------------
+#------------------ Table S3: Area of each land cover by region, 1992-2020 ----------------
+area_by_region_predicted <- pan_region_CI %>% 
+  dplyr::rename(region=pan_region_new2) %>%
+  dplyr::filter(!is.na(region) & decade=="1992-2020") %>%
+  dplyr::mutate(
+    zone = case_when(
+      region %in% boreal_regions ~ "boreal",
+      region %in% temperate_regions ~ "temperate",
+      region %in% tropical_regions ~ "tropical"
+    )) %>%
+  dplyr::select(type, zone, region, decade, region_area_ha) %>%
+  dplyr::mutate(
+    decade=factor(decade, levels=c(1990,2000,2010,"1992-2020")),
+    type=factor(type, levels=c("young forest", "old forest", "grassland")),
+    zone=factor(zone, levels=c("boreal", "temperate", "tropical"))) %>%
+  dplyr::arrange(decade) %>%
+  tidyr::pivot_wider(names_from = decade, values_from = region_area_ha) %>%
+  arrange(type,zone, region) %>%
+  rename(`1992-2020_predicted` = `1992-2020`)
+
+# calculate full regions
+# (boreal, temperate, tropical region defined at top)
+# generate proportion_biome_df with column biome
+proportion_zone_df <- proportion_decade_df %>%
+  dplyr::mutate(zone = case_when(
+    pan_region_new2 %in% boreal_regions ~ "boreal",
+    pan_region_new2 %in% temperate_regions ~ "temperate",
+    pan_region_new2 %in% tropical_regions ~ "tropical"#,
+    #pan_region_new2=="Others" ~ "other"
+  ))
+
+area_by_region_all <- proportion_zone_df %>% 
+  dplyr::select(-youngforest1992_2020, -oldforest1992_2020, -shrubland2010,
+                -youngforest1990, -youngforest2000, -youngforest2010,
+                -oldforest1990, -oldforest2000, -oldforest2010, 
+                -grassland1990, -grassland2000, -grassland2010) %>%
+  dplyr::rename(region = pan_region_new2) %>%
+  # pivot long first
+  tidyr::pivot_longer(
+    cols = c(avg_youngforest1992_2020,avg_oldforest1992_2020,grassland1992_2020),
+    names_to = "type_decade",
+    values_to = "proportion"
+  ) %>% # add type and decade column
+  dplyr::mutate(
+    type = case_when(
+      grepl("youngforest", type_decade) ~ "young forest",
+      grepl("oldforest", type_decade) ~ "old forest",
+      grepl("grassland", type_decade) ~ "grassland"
+    ),
+    decade = case_when(
+      grepl("1990", type_decade) ~ "1990",
+      grepl("2000", type_decade) ~ "2000",
+      grepl("2010", type_decade) ~ "2010",
+      grepl("1992_2020", type_decade) ~ "1992-2020"
+    )) %>% # summarize entire proportion
+  dplyr::mutate(
+    decade=factor(decade, levels=c(1990,2000,2010,"1992-2020")),
+    type=factor(type, levels=c("young forest", "old forest", "grassland")),
+    zone=factor(zone, levels=c("boreal", "temperate", "tropical"))) %>%
+  group_by(region, type, zone, decade) %>%
+  dplyr::summarize(
+    region_area_ha = sum(proportion*cellsize_ha),
+    .groups = "drop" # to give an ungrouped df
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = decade,
+    values_from = region_area_ha
+  ) %>%
+  arrange(type, zone, region) %>%
+  rename(`1992-2020_total` = `1992-2020`)
+
+# make presentable table (if use same proportion for all decade, make % only one column on the right)
+area_by_region <- area_by_region_predicted %>%
+  left_join(
+    area_by_region_all, by=c("type","zone","region")
+  )
+
+area_by_biome <- area_by_region_predicted %>%
+  left_join(
+    area_by_region_all, by=c("type","zone","region")
+  ) %>%
+  group_by(type, zone) %>%
+  # summ area by biome
+  dplyr::summarize(
+    `1992-2020_predicted` = sum(`1992-2020_predicted`, na.rm = TRUE),
+    `1992-2020_total` = sum(`1992-2020_total`, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% # for rbind with area_by_region
+  mutate(region = NA)
+
+area_by_type <- area_by_biome %>%
+  group_by(type) %>%
+  # summ area by type
+  dplyr::summarize(
+    `1992-2020_predicted` = sum(`1992-2020_predicted`, na.rm = TRUE),
+    `1992-2020_total` = sum(`1992-2020_total`, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% # for rbind with area_by_region
+  mutate(region = NA, zone = NA)
+
+area_by_global <- area_by_type %>%
+  # summ area for all
+  dplyr::summarize(
+    `1992-2020_predicted` = sum(`1992-2020_predicted`, na.rm = TRUE),
+    `1992-2020_total` = sum(`1992-2020_total`, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% # for rbind with area_by_region
+  mutate(region = NA, zone = NA, type = NA)
+
+# summarize area predicted in ha and its % of all area
+area_table <- rbind(area_by_region, area_by_biome,  area_by_type,  area_by_global) %>%
+  # calculate percentage of predicted in all area
+  dplyr::mutate(
+    '1992-2020pct' = round(100*`1992-2020_predicted`/`1992-2020_total`)
+  )
+
+#------------------ Table S4: Total SOC changes by region ----------------------
 total_SOC_change_region <- pan_region_CI %>%
   filter(!is.na(pan_region_new2)) %>%
   dplyr::mutate( # add zone
@@ -197,7 +309,7 @@ total_SOC_change_global_Tg <- pan_global_CI %>%
     type, zone,
     summary1990,summary2000,summary2010,summary1992_2020 )
 
-#------------------ Table S4: SOC change per area by region --------------------
+#------------------ Table S5: SOC change per area by region --------------------
 SOC_change_per_area_region <- pan_region_CI %>%
   filter(!is.na(pan_region_new2)) %>%
   dplyr::mutate( # add zone
@@ -257,24 +369,7 @@ SOC_change_per_area_biome <- pan_zone_CI %>%
     type, zone,
     summary1990,summary2000,summary2010,summary1992_2020)
 
-#------------------ Table S5: Area of each land cover by region ----------------
-area_by_region <- pan_region_CI %>% 
-  dplyr::rename(region=pan_region_new2) %>%
-  dplyr::filter(!is.na(region)) %>%
-  dplyr::mutate(
-    zone = case_when(
-      region %in% boreal_regions ~ "boreal",
-      region %in% temperate_regions ~ "temperate",
-      region %in% tropical_regions ~ "tropical"
-    )) %>%
-  dplyr::select(type, zone, region, decade, region_area_ha) %>%
-  dplyr::mutate(
-    decade=factor(decade, levels=c(1990,2000,2010,"1992-2020")),
-    type=factor(type, levels=c("young forest", "old forest", "grassland")),
-    zone=factor(zone, levels=c("boreal", "temperate", "tropical"))) %>%
-  dplyr::arrange(decade) %>%
-  tidyr::pivot_wider(names_from = decade, values_from = region_area_ha) %>%
-  arrange(type,zone, region)
-
-#------------------ Table S6: Data Source details ------------------------------
+#------------------ Table S6: SOC sink and global carbon budget -----------------
+# this table was made manually.
+#------------------ Table S7: Data Source details ------------------------------
 # This table was made manually

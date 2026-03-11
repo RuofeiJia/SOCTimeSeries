@@ -13,15 +13,24 @@ library(ggbreak)
 
 # load TRENDY data (Unit: PgC)
 # total soil carbon (cSoil+cCwd+cLitter) in PgC for each model in TREDNY-v12 at each year
-# this is analysis is available at https://github.com/yinonbaron/SOC_change_TRENDYv12/tree/main
-trendy_df <- read.csv(file = "./results/TRENDY_v12_global_cSoil_S2_20250114.csv")
-
+# this is analysis is available at https://github.com/RuofeiJia/SOC_change_TRENDYv12
+# this sheet can be downloaded at:
+# https://github.com/RuofeiJia/SOC_change_TRENDYv12/blob/main/results/TRENDY_v12_global_cSoil_S2_fraction.csv
+trendy_df <- read.csv(file = "./results/RENDY_v12_global_cSoil_S2_fraction.csv")
 # load my result
-load("./results/upscaled_regional_summary.RData")
+load("./results/find_CI_bayesian_cap2_exclude_same_extent.RData")
+# load (manually estimations of forest SOC sink from 04_upscale.R)
+data_driven_forest_soc_sink_mean <- 1.3909680
+data_driven_forest_soc_sink_std <- 0.2624681 
 
 # process global SOC change (1992-2020) to compare
 # trendy
-trendy_global_1992_2020 <- trendy_df %>% filter(model!="CARDAMOM") %>%
+trendy_global_1992_2020 <- trendy_df %>% 
+  # reformat model column to have only model name, delete directory
+  mutate(
+    model = sub(".*S2/", "", model)
+  ) %>%
+  filter( !(model %in% c("CARDAMOM", "CLM5.0", "CABLE-POP")) ) %>%
   dplyr::mutate(mean = (X2020 - X1992)/28,
                 std=NA, Q2.5=NA, Q5=NA, Q95=NA, Q97.5=NA,
                 source = "TRENDY") %>%
@@ -55,13 +64,13 @@ data_forest_1992_2020 <- pan_type_CI %>%
   ) %>%
   dplyr::select(source, x_name, type,mean, std, Q2.5, Q5, Q95, Q97.5)
 
-# plot with individual models as dot
+# plot with individual models as dot (modified to have 18 instead of 20 models)
 models_data <- trendy_global_1992_2020 %>%
   arrange(desc(mean)) %>%
   mutate(
-    model_num=factor(1:20),
-    legend_x= c(rep(1,10),rep(6.5,10)), # this control the legend column width
-    legend_y= c(10:1,10:1)
+    model_num=factor(1:18),
+    legend_x= c(rep(1,9),rep(6.5,9)), # this control the legend column width
+    legend_y= c(9:1,9:1)
   )
 
 # collate data for panel a: TRENDY (soil+litter+debris) vs this project, global soil
@@ -86,8 +95,8 @@ comparison_forest <- data.frame(
   add_row( # young forest+old forest, 1992-2020 from pan_type_CI 
     # this is generated in script 04_upscaled.R
     source="Data-driven",
-    mean=1.57626445,
-    std=0.8679839 ) %>% # from analysis code
+    mean=data_driven_forest_soc_sink_mean,
+    std=data_driven_forest_soc_sink_std ) %>% # from analysis code
   mutate(
     source=factor(source, levels=c("Pan et al. (2024)", "Data-driven"))
   )
@@ -112,7 +121,7 @@ p_global_nolegend <- ggplot() +
   geom_errorbar(data=comparison_global,
                 aes(x=source, ymin=mean-std, ymax=mean+std), color="black", width = 0.2) +
   geom_point(data=models_data,
-             aes(x=1,y=mean, color=model_num, fill=model_num), shape=1:20, size=1) + # 
+             aes(x=1,y=mean, color=model_num, fill=model_num), shape=1:18, size=1) + # 
   geom_hline(yintercept=0) + 
   labs(x=NULL, y="Global SOC sink\n(Pg C/yr)", tag="A") + 
   scale_x_discrete(
@@ -166,8 +175,12 @@ p_forest
 #--------------- graph that compares biomass vs. soil sink estimates -----------
 # import data
 library(openxlsx)
+# biome_df <- read.xlsx("./results/SOC_change_table.xlsx",
+#                       sheet="Fig3_data_for_forest_sink") 
+
 biome_df <- read.xlsx("./results/SOC_change_table.xlsx",
-                      sheet="Fig3_data_for_forest_sink") 
+                      sheet="Fig3_data_for_forest_sink")
+
 
 # set palettes
 pool_palette_fill <- c(
@@ -245,28 +258,18 @@ gg_color_hue <- function(n) {
   hues = seq(15, 375, length = n + 1)
   hcl(h = hues, l = 65, c = 100)[1:n]
 }
-n <- 20
+n <- 18
 cols <- gg_color_hue(n)
 
 # set up dataframe for models legend
 models_legend_df <- trendy_global_1992_2020 %>%
   arrange(desc(mean)) %>%
   mutate(
-    model_num=factor(1:20),
-    legend_x= c(rep(1,10),rep(7,10)), # this control the legend column width
-    legend_y= c(-1:-10,-1:-10),
+    model_num=factor(1:18),
+    legend_x= c(rep(1,9),rep(7,9)), # this control the legend column width
+    legend_y= c(-1:-9,-1:-9),
     color=cols
   )
-
-# if want one column
-# models_legend_df <- trendy_global_1992_2020 %>%
-#   arrange(desc(mean)) %>%
-#   mutate(
-#     model_num=factor(1:20),
-#     legend_x= c(rep(1,20)),# this control the legend column width
-#     legend_y= c(-1:-20),
-#     color=cols
-#   )
 
 # set up dataframe for pools legend 
 AGpool_legend_df <- data.frame(
@@ -295,7 +298,7 @@ estimates_legend_df <- data.frame(
 
 models_legend <- ggplot() + 
   geom_point(data=models_legend_df,
-             aes(x=legend_x-0.7,y=legend_y, color=color), shape=1:20, size=1) + 
+             aes(x=legend_x-0.7,y=legend_y, color=color), shape=1:18, size=1) + 
   geom_text(data=models_legend_df,
             aes(x=legend_x,y=legend_y,label=x_name),hjust=0, vjust=0.5, size=3.2) +
   geom_text(data=models_legend_df,
@@ -341,15 +344,15 @@ right_column <- arrangeGrob(
 )
 
 # Now layout with the left panels
-combined_fig4 <- grid.arrange(
+combined_fig3 <- grid.arrange(
   grobs = list(p_global_nolegend, p_forest, right_column),
   widths = c(1, 1.3),
   layout_matrix = rbind(c(1, 3),
                         c(2, 3))
 )
 
-# save 
-ggsave("./Figure3.png", plot = combined_fig4, bg = "white", dpi = 600, 
+# save
+ggsave("./figures/Figure3.png", plot = combined_fig3, bg = "white", dpi = 600, 
        width = 90 / 25.4, height = 120 / 25.4, units = "in")
 
 # save 

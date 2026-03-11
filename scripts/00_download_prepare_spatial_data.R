@@ -836,7 +836,7 @@ writeRaster(raster(ph_sg_rast),'./ph_sg_halfdegree.tif',overwrite=TRUE,progress=
 
 ## sample MATs and MAPs of all sites and create "cru_df"
 # so data processing is faster (see "function_extract_CRU" in functions.R)
-load("./SOC_dataset.rda")
+load("./data/SOC_time_series_database.rda")
   # set min and max year
 year_min <- as.double(min(df$observation_year)) # 1876
 year_max <- as.double(max(df$observation_year)) # 2022
@@ -867,7 +867,7 @@ for (year in max(1901,year_min):1902) {
   cru_df <- cbind(cru_df, mat.df, map.df)
 }
   # save cru_df
-save(cru_df, file="./cru_df.rda")
+save(cru_df, file="./data/cru_df.rda")
 
 
 ## sample forest age of all sites and create "world_forest_age_df" (not saved to save storage space)
