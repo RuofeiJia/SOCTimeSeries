@@ -26,6 +26,20 @@ tropical_regions <- c("Africa", "Mexico and Central America", "South America", "
 # set symbol to connect lower and upper credible intervals
 connect_symbol <- ","
 
+# load dataset (final object name: df_std)
+load("./data/SOC_withNewData_for_analysis.rda")
+df_std <- df_std_withNewData; rm(df_std_withNewData)
+
+# time series data
+df_std_ts <- df_std %>% filter(!grepl("OLM-", siteID)) %>%
+  mutate(data_type="Time series") %>%
+  mutate(data_type=factor(data_type, levels=c("Time series", "Single time")))
+
+# one time data
+df_onetime <- df_std %>% filter(grepl("OLM-", siteID)) %>%
+  mutate(data_type="Single time") %>%
+  mutate(data_type=factor(data_type, levels=c("Time series", "Single time")))
+
 #------------------ Table 1: Total SOC changes by biome ------------------------
 # by biome
 total_SOC_change_biome <- pan_zone_CI %>%
@@ -101,6 +115,200 @@ total_SOC_change_global <- pan_global_CI %>%
 
 # assemble
 total_SOC_change_table1 <- rbind(total_SOC_change_biome, total_SOC_change_type, total_SOC_change_global)
+
+## add sample size to table 1
+proportion_decade_df <- proportion_decade_df %>% 
+  distinct(x,y,pan_region_new2)
+
+# 1. extract region to data based on their nearest pixel location
+sample_size_zone <- df_std %>% 
+  mutate(
+    # assign data_type
+    data_type = ifelse(grepl("OLM-", siteID), "one time", "repeated"),
+    # round the data lat long to nearest 0.25, 0.75 (center of 0.5 pixel)
+    x = round((long - 0.25) / 0.5) * 0.5 + 0.25,
+    y = round((lat  - 0.25) / 0.5) * 0.5 + 0.25
+  ) %>% 
+  # assign region based on rounded lat long
+  distinct(x, y, siteID, forest_cond_gf_besnard60, data_type) %>%
+  left_join(
+    proportion_decade_df, by = c("x", "y")
+  ) %>%
+  dplyr::mutate( # add zone
+    zone = case_when(
+      pan_region_new2 %in% tropical_regions ~ "tropical",
+      pan_region_new2 %in% temperate_regions ~ "temperate",
+      pan_region_new2 %in% boreal_regions ~ "boreal",
+      TRUE ~ NA
+    )
+  ) %>%
+  # summarize number of sites in each region
+  group_by(forest_cond_gf_besnard60, zone, data_type) %>%
+  summarize( site_number=length(unique(siteID)) ) %>%
+  tidyr::pivot_wider(
+    names_from = data_type,
+    values_from = site_number,
+    names_glue = "{data_type}_site_number",
+    values_fill = 0
+  ) %>%
+  filter(!is.na(zone))
+
+# 2. identify zone of the rest of unknown sites based on rworldmap
+unknown_sites <- df_std %>% 
+  mutate(
+    # assign data_type
+    data_type = ifelse(grepl("OLM-", siteID), "one time", "repeated"),
+    # round the data lat long to nearest 0.25, 0.75 (center of 0.5 pixel)
+    x = round((long - 0.25) / 0.5) * 0.5 + 0.25,
+    y = round((lat  - 0.25) / 0.5) * 0.5 + 0.25
+  ) %>% 
+  # assign region based on rounded lat long
+  distinct(lat,long, x, y, siteID, forest_cond_gf_besnard60, data_type) %>%
+  left_join(
+    proportion_decade_df, by = c("x", "y")
+  ) %>%
+  dplyr::mutate( # add zone
+    zone = case_when(
+      pan_region_new2 %in% tropical_regions ~ "tropical",
+      pan_region_new2 %in% temperate_regions ~ "temperate",
+      pan_region_new2 %in% boreal_regions ~ "boreal",
+      TRUE ~ NA
+    )
+  ) %>% filter(is.na(zone)) 
+
+# extract country and regions
+# get sample size by region
+library(sp)
+library(rworldmap)
+coords2continent <- function(df) {  
+  # library(sp)
+  # library(rworldmap)
+  countriesSP <- getMap(resolution='low')
+  #countriesSP <- getMap(resolution='high') #you could use high res map from rworldxtra if you were concerned about detail
+  
+  points <- df[,c("long","lat")]
+  
+  # converting points to a SpatialPoints object
+  # setting CRS directly to that from rworldmap
+  pointsSP = SpatialPoints(points, proj4string=CRS(proj4string(countriesSP)))  
+  
+  
+  # use 'over' to get indices of the Polygons object containing each point 
+  indices = over(pointsSP, countriesSP)
+  
+  #indices$continent   # returns the continent (6 continent model)
+  #indices$REGION   # returns the continent (7 continent model)
+  #indices$ADMIN  #returns country name
+  #indices$ISO3 # returns the ISO3 code 
+  
+  df <- df %>%
+    dplyr::mutate(continent = indices$REGION)
+  
+  return(df)
+}
+coords2country <- function(df) {  
+  # library(sp)
+  # library(rworldmap)
+  countriesSP <- getMap(resolution='low')
+  #countriesSP <- getMap(resolution='high') #you could use high res map from rworldxtra if you were concerned about detail
+  
+  points <- df[,c("long","lat")]
+  
+  # converting points to a SpatialPoints object
+  # setting CRS directly to that from rworldmap
+  pointsSP = SpatialPoints(points, proj4string=CRS(proj4string(countriesSP)))  
+  
+  
+  # use 'over' to get indices of the Polygons object containing each point 
+  indices = over(pointsSP, countriesSP)
+  
+  #indices$continent   # returns the continent (6 continent model)
+  #indices$REGION   # returns the continent (7 continent model)
+  #indices$ADMIN  #returns country name
+  #indices$ISO3 # returns the ISO3 code 
+  
+  df <- df %>%
+    dplyr::mutate(country = indices$ADMIN)
+  
+  return(df)
+}
+
+
+unknown_sites <- coords2continent(unknown_sites)
+unknown_sites <- coords2country(unknown_sites)
+
+unknown_sites_summary <- unknown_sites %>%
+  group_by(continent, country, forest_cond_gf_besnard60, data_type) %>%
+  summarize(site_number = length(unique(siteID)))
+
+# sort data into region divisions consistent with this paper based on country and continent above
+sort_region <- function(df) {
+  
+  df_new <- df %>% mutate(
+    zone = case_when(
+      continent=="South America" ~ "tropical",
+      continent=="Australia" ~ "temperate",
+      country=="United States of America" ~ "temperate",
+      country=="Canada" ~ "boreal",
+      country=="Taiwan" ~ "temperate",
+      country=="Finland" & continent=="Europe" ~ "boreal",
+      continent=="Europe" ~ "temperate"
+    )
+  )
+}
+# organize
+unknown_wide <- sort_region(unknown_sites_summary) %>%
+  distinct(forest_cond_gf_besnard60, zone, data_type, site_number) %>%
+  group_by(forest_cond_gf_besnard60, zone, data_type) %>%
+  summarize(site_number = sum(site_number)) %>%
+  filter(!is.na(zone)) %>%
+  tidyr::pivot_wider(
+    names_from = data_type,
+    values_from = site_number,
+    names_glue = "{data_type}_site_number",
+    values_fill = 0
+  )
+
+# 3, for the rest of unknown sites, infer manually from information in siteID
+unknown2 <- unknown_sites %>% filter(is.na(country) & is.na(continent))
+
+# infer zone from siteID
+unknown2$zone <- c("boreal","temperate","temperate","temperate",
+                   "temperate","temperate","temperate",
+                   "tropical","tropical","tropical","tropical")
+
+unknown2_wide <- unknown2 %>%
+  distinct(forest_cond_gf_besnard60, zone, data_type, siteID) %>%
+  group_by(forest_cond_gf_besnard60, zone, data_type) %>%
+  summarize(site_number = length(unique(siteID))) %>%
+  tidyr::pivot_wider(
+    names_from = data_type,
+    values_from = site_number,
+    names_glue = "{data_type}_site_number",
+    values_fill = 0
+  )
+
+
+# incorporate all three summaries
+sample_size_final <- rbind(sample_size_zone, unknown_wide, unknown2_wide) %>%
+  group_by(forest_cond_gf_besnard60, zone) %>%
+  summarize(repeated_site_number = sum(repeated_site_number),
+            `one time_site_number` = sum(`one time_site_number`)) %>%
+  mutate(
+    repeated_and_single_site_number =
+      paste0("(n=",repeated_site_number, "+", `one time_site_number`,")")
+  )
+
+# site numbers by type
+sample_size_final_type <- rbind(sample_size_zone, unknown_wide, unknown2_wide) %>%
+  group_by(forest_cond_gf_besnard60) %>%
+  summarize(repeated_site_number = sum(repeated_site_number),
+            `one time_site_number` = sum(`one time_site_number`)) %>%
+  mutate(
+    repeated_and_single_site_number =
+      paste0("(n=",repeated_site_number, "+", `one time_site_number`,")")
+  )
+
 #------------------ Table S1: Summary of model coefficient estimates -----------
 fixed_coef <- as.data.frame(summary(brms1)$fixed) %>%
   mutate_at(1:7, round, 3) %>%
