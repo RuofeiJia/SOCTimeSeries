@@ -29,7 +29,7 @@ load("./results/predicted_inputs_brms1_37k12chain.rda")
 # load land use proportion
 load("./data/proportion_decade_df.rda")
 # load model
-load("./results/brms1_timeseries_37k12chain.rda")
+load("./results/brms1_withOneTime_37k12chain.rda")
 
 # define color
 my_palette_zone <- 
@@ -160,7 +160,7 @@ pgam_brms <- ggplot() +
               alpha = 0.3, color = NA, linetype = 0) +
   scale_fill_manual(values = my_palette_zone, labels = str_to_title(levels(mod_pred$zone))) +
   scale_color_manual(values = my_palette_zone, labels = str_to_title(levels(mod_pred$zone))) +
-  ylab("Cumulative SOC density change (Mg C/ha)") + xlab("Year") +
+  ylab(expression("Cumulative SOC density change (" * Mg ~ C ~ ha^{-1} * ")")) + xlab("Year") +
   facet_wrap(~ forest_cond_gf_besnard60, ncol=3, labeller = labeller(forest_cond_gf_besnard60 = custom_labels)) +
   coord_cartesian(clip = "off") +
   # # uncomment the following line to plot Fig. S14
