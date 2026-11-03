@@ -23,3 +23,8 @@ std_year,dimensionless,standardized values of observation_year. See std_MAT_cru 
 std_n_pct_plo,dimensionless,standardized values of n_pct_plo. See std_MAT_cru for calculation details.
 std_clay_plo,dimensionless,standardized values of clay_plo. See std_MAT_cru for calculation details.
 std_ph_plo,dimensionless,standardized values of ph_plo. See std_MAT_cru for calculation details.
+management,string,management records from data source
+disturbance,string,disturbance records from data source
+waterlog,string,waterlog records from data source
+pan_region_new2,string,region of the site
+zone,string,climate zone of the site following division in Pan et al. (2024) https://www.nature.com/articles/s41586-024-07602-x 

@@ -17,14 +17,16 @@ library(tictoc)
 # working directory should be set by default to the folder of entire repo (R project)
 
 # load raw dataset (object name for dataframe is df)
-load("./data/SOC_time_series_database.rda") 
+load("./data/SOC_timeseries_database_2026Jun24.rda") 
+
+# set source dirsctory for maps
+map_dir <- "./data"
 
 #------ 0. functions -----------------------------------------------------------
 # all functions needed for 01_process_input_data.R
 # in order of appearance in 01_process_input_data.R
 # most functions are used to extract and gapfill covariates from spatial data products
 # other functions are used to process/clean data surrounding bulk density
-
 # gapfill existing BD data to same plot, other time
 clean_gapfill_BD <- function(df) {
   
@@ -39,20 +41,23 @@ clean_gapfill_BD <- function(df) {
     dplyr::mutate( # assign whether a BD is beyond threshold
       BD_threshold = case_when(
         lower_depth > 21 ~ "No", # LUCAS threshold apply only to top 20cm, US FIA threshold apply only to top 8 inch
-        grepl("marsh|bog|water", land_cover) ~ "No", # if water saturated soil, keep BD value
+        grepl("yes", waterlog) ~ "No", # if water saturated soil, keep BD value
         BD_def=="fine earth" & (BD<BDfine_min | BD>BDfine_max) ~ "Yes", # else if BD fine beyond threshold, exclude
         BD_def=="whole soil" & (BD<BDsoil_min | BD>BDsoil_max) ~ "Yes", # else if BD soil beyond threshold, exclude
         TRUE ~ "No" # else, keep original BD values
       )) %>% group_by(plotID, observation_year) %>%
-    dplyr::mutate( # based on threshold column, if a profile has suspicious value, exclude value from that profile
+    dplyr::mutate( # based on threshold column, if a profile has suspicious value, label this profile as beyond BD threshold
       BD_threshold_profile = ifelse("Yes" %in% unique(BD_threshold), "Yes", "No")
     ) %>% ungroup() %>%
+    # exclude BD values reported for these profiles
     dplyr::mutate( 
       BD = ifelse(BD_threshold_profile=="Yes", NA, BD),
       BD_eff = ifelse(BD_threshold_profile=="Yes", NA, BD_eff)
     ) %>% arrange(plotID, observation_year, upper_depth)
   
-  # (2) exclude BD in profiles that show too much change over time, keep the most recent record
+  # changed returned file to df_new
+  # (2) exclude BD in profiles that show too much change over time, it is likely a unit error.
+  # keep the most recent record
   # because older data is more likely to have error during allocation
   
   # add column ratio_bottom_BD, ratio of max bottom comparable BD across time for each plot
@@ -62,14 +67,14 @@ clean_gapfill_BD <- function(df) {
     arrange(upper_depth) %>%
     dplyr::mutate(
       lowest_bd_profile = max(upper_depth[!is.na(BD)], na.rm = TRUE) # profile level lower depth with a !is.na(BD)
-    ) %>% ungroup() %>% group_by(plotID) %>% 
+    ) %>% ungroup() %>% group_by(plotID) %>%
     dplyr::mutate( # get lowest comparable BD by upper_depth
       lowest_bd_plot = min(lowest_bd_profile)
     ) %>% # filter out rows that are deeper than plot-level comparable lowest_bd layer
-    dplyr::filter(upper_depth<=lowest_bd_plot) %>% 
+    dplyr::filter(upper_depth<=lowest_bd_plot) %>%
     group_by(plotID, observation_year) %>% arrange(upper_depth) %>%
     dplyr::mutate(
-      bottom_BD = last(BD)
+      bottom_BD = as.numeric(last(BD))
     ) %>%
     ungroup() %>% group_by(plotID) %>%
     dplyr::mutate(
@@ -86,7 +91,8 @@ clean_gapfill_BD <- function(df) {
   
   # exclude the BDs from plots in BD_extreme_change
   # (for the plots that have extreme BD change, keep the most recent year with BDs)
-  bottom_BD_ratio_max <- 2 # set max bottom_BD_ratio threshold
+  # set max bottom_BD_ratio threshold # with ratio 2, 25 plots will be excluded
+  bottom_BD_ratio_max <- 2 
   df_new3 <- df_new2 %>%
     dplyr::mutate(
       BD = case_when(
@@ -136,6 +142,7 @@ clean_gapfill_BD <- function(df) {
   df_new4 <- df_new4 %>% arrange(siteID,plotID,observation_year,upper_depth)
   
   return(df_new4) # return the newest df name
+  
 }
 
 # extract bulk density from soilgrids to gapfill dataset
@@ -143,12 +150,12 @@ extract_bulk_density <- function(df) {
   library(raster)
   
   # load raster !!!! rename after downloading
-  bd05 <- raster("./data/fine_bulk_density_0-5cm_SoilGrids2.tif")
-  bd515 <- raster("./data/fine_bulk_density_5-15cm_SoilGrids2.tif")
-  bd1530 <- raster("./data/fine_bulk_density_15-30cm_SoilGrids2.tif")
-  bd3060 <- raster("./data/fine_bulk_density_30-60cm_SoilGrids2.tif")
-  bd60100 <- raster("./data/fine_bulk_density_60-100cm_SoilGrids2.tif")
-  bd100200 <- raster("./data/fine_bulk_density_100-200cm_SoilGrids2.tif")
+  bd05 <- raster(paste0(map_dir,"/fine_bulk_density_0-5cm_SoilGrids2.tif"))
+  bd515 <- raster(paste0(map_dir,"/fine_bulk_density_5-15cm_SoilGrids2.tif"))
+  bd1530 <- raster(paste0(map_dir,"/fine_bulk_density_15-30cm_SoilGrids2.tif"))
+  bd3060 <- raster(paste0(map_dir,"/fine_bulk_density_30-60cm_SoilGrids2.tif"))
+  bd60100 <- raster(paste0(map_dir,"/fine_bulk_density_60-100cm_SoilGrids2.tif"))
+  bd100200 <- raster(paste0(map_dir,"/fine_bulk_density_100-200cm_SoilGrids2.tif"))
   
   
   # sample raster
@@ -193,12 +200,12 @@ extract_coarse_fragment_vol <- function(df) {
   library(raster)
   
   # load coarse fragment 0-5cm from soilgrids
-  cfvo05 <- raster("./data/coarse_fragment_vol_0-5cm_SoilGrids2.tif")
-  cfvo515 <- raster("./data/coarse_fragment_vol_5-15cm_SoilGrids2.tif")
-  cfvo1530 <- raster("./data/coarse_fragment_vol_15-30cm_SoilGrids2.tif")
-  cfvo3060 <- raster("./data/coarse_fragment_vol_30-60cm_SoilGrids2.tif")
-  cfvo60100 <- raster("./data/coarse_fragment_vol_60-100cm_SoilGrids2.tif")
-  cfvo100200 <- raster("./data/coarse_fragment_vol_100-200cm_SoilGrids2.tif")
+  cfvo05 <- raster(paste0(map_dir,"/coarse_fragment_vol_0-5cm_SoilGrids2.tif"))
+  cfvo515 <- raster(paste0(map_dir,"/coarse_fragment_vol_5-15cm_SoilGrids2.tif"))
+  cfvo1530 <- raster(paste0(map_dir,"/coarse_fragment_vol_15-30cm_SoilGrids2.tif"))
+  cfvo3060 <- raster(paste0(map_dir,"/coarse_fragment_vol_30-60cm_SoilGrids2.tif"))
+  cfvo60100 <- raster(paste0(map_dir,"/coarse_fragment_vol_60-100cm_SoilGrids2.tif"))
+  cfvo100200 <- raster(paste0(map_dir,"/coarse_fragment_vol_100-200cm_SoilGrids2.tif"))
   
   # sample them into cf_df
   df[c("lat","long")] <- sapply(df[c("lat","long")], as.double)
@@ -237,7 +244,7 @@ extract_coarse_fragment_vol <- function(df) {
 # extract topsoil clay percentage from soilgrids to gapfill dataset
 extract_clay <- function(df) {
   # load clay05
-  clay05 <- raster("./data/clay05cm_0p25_SoilGrids2.tif")
+  clay05 <- raster(paste0(map_dir,"/clay05cm_0p25_SoilGrids2.tif"))
   
   # extract points
   df[c("lat","long")] <- sapply(df[c("lat","long")], as.double)
@@ -254,7 +261,7 @@ extract_clay <- function(df) {
 # extract topsoil pH from soilgrids to gapfill dataset
 extract_ph <- function(df) {
   # load topsoil ph
-  ph05 <- raster("./data/ph05cm_SoilGrids2.tif")
+  ph05 <- raster(paste0(map_dir,"/ph05cm_SoilGrids2.tif"))
   
   # extract points
   df[c("lat","long")] <- sapply(df[c("lat","long")], as.double)
@@ -272,7 +279,7 @@ extract_ph <- function(df) {
 extract_n<- function(df) {
   
   # load n05
-  n05 <- raster("./data/n05cm_SoilGrids2.tif")
+  n05 <- raster(paste0(map_dir,"/n05cm_SoilGrids2.tif"))
   
   # extract points
   df[c("lat","long")] <- sapply(df[c("lat","long")], as.double)
@@ -293,7 +300,7 @@ extract_CRU <- function(df) {
   library(cruts)
   
   # import latest cru_df
-  load("./data/cru_df.rda")
+  load(paste0(map_dir,"/cru_df.rda"))
   
   # set cru_df points
   old_points <- distinct(cru_df[c("long","lat")])
@@ -310,8 +317,8 @@ extract_CRU <- function(df) {
   if (nrow(new_points)>0) {
     coordinates(new_points) <- c("long","lat")
     
-    temp_file <- "./data/cru_ts4.07.1901.2022.tmp.dat.nc"
-    prec_file <- "./data/cru_ts4.07.1901.2022.pre.dat.nc"
+    temp_file <- paste0(map_dir,"/cru_ts4.07.1901.2022.tmp.dat.nc")
+    prec_file <- paste0(map_dir,"/cru_ts4.07.1901.2022.pre.dat.nc")
     
     # set new rows for cru_df (if additional points are added since cru_df was created)
     new_cru_df <- data.frame(new_points)
@@ -334,8 +341,8 @@ extract_CRU <- function(df) {
     # make updated cru_df and save
     cru_df <- rbind(cru_df, new_cru_df) %>% 
       dplyr::select(lat,long,starts_with("mat_"), starts_with("map_"))
-    save(cru_df, file="./data/cru_df.rda")
-    write.csv(cru_df, "./data/cru_df.csv")
+    save(cru_df, file=paste0(map_dir,"/cru_df.rda"))
+    write.csv(cru_df, paste0(map_dir,"/cru_df.csv"))
   }
   
   # add MAT_cru, MAP_cru (MAT, MAP of observed year) in df
@@ -488,7 +495,7 @@ extract_Besnard_forest_age <- function(df) {
   # https://essd.copernicus.org/articles/13/4881/2021/
   
   # load world_forest_age_df (created in script 00_download_prepare_spatial_data.R)
-  load("./data/world_forest_age_df.rda")
+  load(paste0(map_dir,"/world_forest_age_df.rda"))
   
   # set cru_df points
   old_points <- distinct(world_forest_age_df[c("long","lat")])
@@ -508,7 +515,7 @@ extract_Besnard_forest_age <- function(df) {
     new_world_forest_age_df <- new_points
     coordinates(new_points) <- c("long","lat")
     # load product
-    filename <- "./data/202432118501222_BGIForestAgeMPIBGC1.0.0.nc"
+    filename <- paste0(map_dir,"/202432118501222_BGIForestAgeMPIBGC1.0.0.nc")
     world_forest_age <- stack(filename, varname="ForestAge_TC010")
     # use 10% tree cover correction (not consider pixels with <10% tree cover)
     crs(world_forest_age) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
@@ -522,7 +529,7 @@ extract_Besnard_forest_age <- function(df) {
     world_forest_age_df <- rbind(world_forest_age_df, new_world_forest_age_df)
     
     # save updated world_forest_age_df
-    save(world_forest_age_df, file="./data/world_forest_age_df.rda")
+    save(world_forest_age_df, file=paste0(map_dir,"/world_forest_age_df.rda"))
     
   }
   
@@ -552,13 +559,15 @@ extract_Besnard_forest_age <- function(df) {
   return(df)
 }
 
+
 #------ 1. convert all SOC units to SOC stock and adjust for depth (0-30cm) ----
 
 ## clean columns
+# convert numeric columns to "double" format
 sapply(df, typeof)
 
 cols_num <- c("year", "lat", "long", "observation_year", "observation_month", "c_value", "c_SD",
-              "c_SE", "sample_number", "upper_depth", "lower_depth", "restoration_year", "BD_eff", "BD",
+              "c_SE", "sample_number", "upper_depth", "lower_depth", "restoration_year", "BD_eff", "BD",  
               "BD_SD", "BD_SE", "clay", "silt", "sand", "pH", "n_value", "n_SE", "c_n", "NPP",
               "elevation", "MAT", "MAP")
 
@@ -566,8 +575,8 @@ df[cols_num] <- sapply(df[cols_num], as.double)
 sapply(df[cols_num], typeof)
 
 # format unit
-unique(df$c_unit) # "mg/g"  "t/ha"  "%"     "g/kg"  "Mg/ha" "kg/m2" "g/m2" "g/cm2"
-unique(df$BD_unit) # NA      "g/cm3" x "g/cm^3" ""
+sort(unique(df$c_unit)) # "mg/g"  "t/ha"  "%"     "g/kg"  "Mg/ha" "kg/m2" "g/m2" "g/cm2"
+unique(df$BD_unit) # NA      "g/cm3" "x" "g/cm^3" ""
 unique(df$n_unit) # "mg/g" "g/kg" "%"    "t/ha"  "Mg/ha" "g/m2"
 
 df[df$n_unit %in% c("g/kg", "mg/g"),]$n_unit <- "g/kg"
@@ -576,20 +585,20 @@ df[df$c_unit %in% c("t/ha"),]$c_unit <- "Mg/ha"
 df[df$BD_unit %in% c("g/cm^3"),]$BD_unit <- "g/cm3"
 
 ## gapfill bulk density and adjust for coarse fragment
-sum(is.na(df$BD)) # 8135 missing BD data out of 18366 observations
+sum(is.na(df$BD)) # 14851 missing BD data out of 25415 observations
 
 # (1) clean erroneous BD and extreme BD change
 # (2) gapfill BD and BD_eff of profiles within plot, across sampling time
 tic()
 df <- clean_gapfill_BD(df) # add column BD_from_data and BD_eff_from_data
-toc() # 69 sec
+toc() # 173.865 sec elapsed
 
 # extract BD from soilgrids
 tic()
 df <- extract_bulk_density(df) # add column bd_fine_sg
 toc()
 # check BD failed to be extracted
-sum(is.na(df$bd_fine_sg)) # 585 missing BD
+sum(is.na(df$bd_fine_sg)) # 725 missing BD
 
 # gapfill BD_gf with first BD_from_data and then bd_fine_sg
 df <- df %>% mutate(
@@ -602,11 +611,11 @@ df <- df %>% mutate(
   mutate( # fill BD_def for rows gapfilled with bd_fine_sg, the rest of BD_def predefined by source
     BD_def = ifelse(BD_gf==bd_fine_sg, "fine earth", BD_def) )
 
-sum(is.na(df$BD_gf)) # 245
+sum(is.na(df$BD_gf)) # 415
 
 # add coarse fragment
 df <- extract_coarse_fragment_vol(df) # add column cf_vol_sg
-sum(is.na(df$cf_vol_sg)) # 524 missing
+sum(is.na(df$cf_vol_sg)) # 685 missing
 
 # calculate BD_eff_est from BD_fine, BD_soil and cf_vol_sg (gapfill priority 1)
 rho_coarse <- 2.6 # assume coarse fragment density
@@ -631,7 +640,7 @@ df <- df %>% mutate(
   )
 )
 
-sum(is.na(df$BD_eff_gf)) # 570
+sum(is.na(df$BD_eff_gf)) # 847
 # above: gapfill bulk density finished
 
 ## format and convert c_unit
@@ -686,7 +695,7 @@ df <- df %>%
   ))
 
 # check missing SOC stock 
-sum(is.na(df$SOC_stock)) # 179
+sum(is.na(df$SOC_stock)) # previous: 179, now: 459
 
 # exclude missing SOC_stock from df
 df <- df %>% filter(!is.na(SOC_stock))
@@ -717,7 +726,7 @@ df_adjusted <- data.frame() # dataset with each profile per row
 cols_adjusted <- c("source", "author", "year", "title", "url", "collector", "lat", "long",
                    "site_name", "siteID", "plotID", "profileID", "observation_year", "observation_month",
                    "land_cover", "restoration", "restoration_year", "successional_stage", "elevation", "MAT", "MAP", "SOC_stock_30",
-                   "SOC_stock_60", "r_squared")
+                   "SOC_stock_60", "r_squared", "management", "waterlog", "disturbance")
 
 
 for (i in 1:nrow(distinct(df, plotID, profileID)) ) { # loop through each soil profile
@@ -861,11 +870,14 @@ df_adjusted <- df_adjusted %>%
   group_by(plotID) %>% dplyr::arrange(plotID,observation_year) %>%
   filter(length(unique(observation_year))>1) %>% ungroup()
 
+n_distinct(df_adjusted$siteID) # 5913
+n_distinct(df_adjusted$plotID) # 6560
+
 # # save intermediate steps
-# save(df_processed, file="./data/df_processed_2024Jul09.rda") # 695 entries
-# save(df_adjusted, file="./data/df_adjusted_2024Jul09.rda") # 814 entries
-# write.csv(df_processed, "./data/df_processed_2024Jul09.csv", row.names = FALSE)
-# write.csv(df_adjusted, "./data/df_adjusted_2024Jul09.csv", row.names = FALSE)
+# save(df_processed, file="./data/df_processed_2026Jul05.rda") # 695 entries
+# save(df_adjusted, file="./data/df_adjusted_2026Jul05.rda") # 814 entries
+# write.csv(df_processed, "./data/df_processed_2026Jul05.csv", row.names = FALSE)
+# write.csv(df_adjusted, "./data/df_adjusted_2026Jul05.csv", row.names = FALSE)
 
 #------ 2. add and format covariates -------------------------------------------
 # this steps takes df_processed from above and process data further
@@ -900,7 +912,7 @@ df_adjusted_covariates <- df_processed %>%
            plotID, profileID, observation_year, observation_month, land_cover, restoration, 
            restoration_year, elevation, MAT, MAP, SOC_stock_30, SOC_stock_60, r_squared, 
            pro_depth, pro_C_stock, plo_clay, plo_silt, plo_sand, plo_ph, plo_n_pct, 
-           plo_c_n, plo_elevation) %>%
+           plo_c_n, plo_elevation, successional_stage, management, waterlog, disturbance) %>%
   group_by(profileID) %>%
   filter(row_number()==1) %>% ungroup()
 
@@ -932,7 +944,9 @@ df_adjusted_covariates <- extract_CRU(df_adjusted_covariates)
 toc()
 
 # get estimated forest restoration year based on forest age circa 2010 (df$besnard_restoration_year)
+tic()
 df_adjusted_covariates <- extract_Besnard_forest_age(df_adjusted_covariates)
+toc()
 
 ## gapfill covariates
 df_lm_covariates <- df_adjusted_covariates %>%
@@ -946,12 +960,12 @@ df_lm_covariates <- df_adjusted_covariates %>%
     initial_stock30 = SOC_stock_30[1],
     initial_stock60 = SOC_stock_60[1],
     abs_diff_30 = SOC_stock_30 - lag(SOC_stock_30, default = first(SOC_stock_30))#, # change from last observation
-    ) %>% dplyr::mutate(
+  ) %>% dplyr::mutate(
     abs30_rate_mgha_yr = abs_diff_30/time_interval
   ) %>% dplyr::ungroup()
 
-# # change land_cover names
-# df_lm_covariates$land_cover <- ifelse(grepl("Bog|peatbogs", df_lm_covariates$land_cover), "bog", df_lm_covariates$land_cover)
+# change land_cover names
+df_lm_covariates$land_cover <- ifelse(grepl("Bog|peatbogs", df_lm_covariates$land_cover), "bog", df_lm_covariates$land_cover)
 
 # add factor to categorical columns
 df_lm_covariates$siteID <- factor(df_lm_covariates$siteID)
@@ -964,13 +978,13 @@ df_lm_covariates$restoration <- factor(df_lm_covariates$restoration)
 df_lm_covariates <- dplyr::rename(df_lm_covariates,
                                   SOC_stock30 = SOC_stock_30#,
                                   #SOC_stock60 = SOC_stock_60
-                                  )
+)
 
 sapply(df_lm_covariates, function(x) sum(is.na(x)))
 
 # # save intermediate step
-# save(df_lm_covariates, file="df_lm_covariates_2024Jul09.rda")
-# write.csv(df_lm_covariates, "/Users/jiaruofei/Dropbox (MIT)/Global_SOC/df_lm_covariates_2024Jul09.csv", row.names = FALSE)
+# save(df_lm_covariates, file="./data/df_lm_covariates_2026Jul05.rda")
+# write.csv(df_lm_covariates, "./data/df_lm_covariates_2026Jul05.csv", row.names = FALSE)
 
 # filter to keep only columns needed for next steps
 # create df with only columns are modeling/analysis #!!!!!!add EU forest age column
@@ -978,19 +992,21 @@ df_gf <- df_lm_covariates[c("source",
                             "lat", "long", "siteID", "plotID", "profileID", "observation_year",
                             "land_cover", "restoration", "restoration_year", "besnard_restoration_year", 
                             "MAT_cru", "MAP_cru", "clay_gf", "ph_gf", "n_pct_gf",
-                           "initial_stock30", "mean_mat_site", "mean_map_site",
+                            "initial_stock30", "mean_mat_site", "mean_map_site",
                             "SOC_stock30", "pro_depth", "pro_C_stock", 
-                            "abs30_rate_mgha_yr"
+                            "abs30_rate_mgha_yr","successional_stage", 
+                            "management", "waterlog", "disturbance"
 )]
-# # save intermediate steps
-# save(df_gf, file="./data/df_gf_2024Jul09.rda")
-# write.csv(df_gf, "./data/df_gf_2024Jul09.csv", row.names = FALSE)
 
-# merge region, MAT, MAP, MAT to df_layer
-df_layer_gf <- merge(x=df_layer, 
-                     y=df_gf[,c("profileID","MAT_cru","MAP_cru","mean_mat_site","mean_map_site",
-                                "besnard_restoration_year")], 
-                     by="profileID",all.x=T)
+# # save intermediate steps
+# save(df_gf, file="./data/df_gf_2026Jul05.rda")
+# write.csv(df_gf, "./data/df_gf_2026Jul05.csv", row.names = FALSE)
+
+# # merge region, MAT, MAP, MAT to df_layer
+# df_layer_gf <- merge(x=df_layer, 
+#                      y=df_gf[,c("profileID","MAT_cru","MAP_cru","mean_mat_site","mean_map_site",
+#                                 "besnard_restoration_year")], 
+#                      by="profileID",all.x=T)
 # # save intermediate step
 # save(df_layer_gf, file="./data/df_layer_gf_2024Jul09.rda")
 # write.csv(df_layer_gf, "./data/df_layer_gf_2024Jul09.csv", row.names = FALSE)
@@ -1000,12 +1016,11 @@ df_layer_gf <- merge(x=df_layer,
 # exclude the very ancient grassland obsin 1876
 df_gf <- df_gf %>% filter(observation_year>1900)
 
-# exclude other land cover to only include only forest and grasslands
-df_gf <- df_gf %>% filter(land_cover %in% c("forest", "grassland")) %>%
+# exclude water-saturated plots and shrubland plots
+df_gf <- df_gf %>% filter(grepl("forest|grassland", land_cover)) %>%
   mutate(land_cover=factor(land_cover))
 
 unique(df_gf$land_cover)
-unique(df_gf$biome3)
 
 # exclude plots that restoration_year in between first and last observation
 # make restoration year NA if restoration_year >=last observation year
@@ -1020,40 +1035,51 @@ df_gf <- df_gf %>% group_by(plotID) %>% arrange(observation_year) %>%
   )
 
 ## clean outliers in SOC temporal change
-# filter by the ratio of repeated sampling and first sampling's profile depth SOC stock
+# filter by the ratio of repeated sampling and first sampling's 30 cm depth SOC stock
+# some plots have slightly different depths of sampled profile across time
+# compare top 30cm stock over time to be consistent
 
 # add percentage of profile SOC stock to first observation
 df_gf <- df_gf %>% group_by(plotID) %>% arrange(plotID, observation_year) %>%
-  dplyr::mutate(first_proSOC= first(pro_C_stock)) %>%
+  dplyr::mutate(first_proSOC= first(pro_C_stock),
+                first_30SOC = first(SOC_stock30)) %>%
   ungroup() %>% 
   mutate(pct_1stproSOC = pro_C_stock/first_proSOC,
-         pct_1stproSOC_log = log(pro_C_stock/first_proSOC) ) %>% # ratio of profile-depth SOC/first time measrurement
+         pct_1stproSOC_log = log(pro_C_stock/first_proSOC),
+         pct_1st_30SOC = SOC_stock30/first_30SOC,
+         pct_1st_30SOC_log = log(SOC_stock30/first_30SOC)
+  ) %>% # ratio of profile-depth, and 30cm SOC/first time measrurement
   dplyr::arrange(pct_1stproSOC, descending=F)
 
 # visualize
 ggplot(data=df_gf) + 
   geom_histogram(aes(x=pct_1stproSOC_log),bins = 100)
+ggplot(data=df_gf) + 
+  geom_histogram(aes(x=pct_1st_30SOC_log),bins = 100)
 
 # clean beyond +2 and -2 sd (regardless of different pro_depth for now)
 sd_pct_1stproSOC_log <- sd(df_gf$pct_1stproSOC_log)
 mean_pct_1stproSOC_log <- mean(df_gf$pct_1stproSOC_log)
 
-df_gf_sd <- df_gf %>% ungroup() %>%
-  filter(pct_1stproSOC_log<=mean_pct_1stproSOC_log+2*sd_pct_1stproSOC_log & 
-           pct_1stproSOC_log>=mean_pct_1stproSOC_log-2*sd_pct_1stproSOC_log ) %>% # delete the observations with extreme change from first obs
-  group_by(plotID) %>%
-  dplyr::filter(length(unique(observation_year))>1) 
+sd_pct_1st_30SOC_log <- sd(df_gf$pct_1st_30SOC_log)
+mean_pct_1st_30SOC_log <- mean(df_gf$pct_1st_30SOC_log)
 
-plots_sd <- unique(df_gf_sd$plotID) # 3375 plots
+df_gf_sd <- df_gf %>% ungroup() %>%
+  filter(pct_1st_30SOC_log<=mean_pct_1st_30SOC_log+2*sd_pct_1st_30SOC_log &
+           pct_1st_30SOC_log>=mean_pct_1st_30SOC_log-2*sd_pct_1st_30SOC_log ) %>% # delete the observations with extreme change from first obs
+  group_by(plotID) %>%
+  dplyr::filter(length(unique(observation_year))>1)
+
+plots_sd <- unique(df_gf_sd$plotID) # 5569 plots, 6171 plots before excluding outlier of log(ratio in profile SOC stock)
 
 
 ## adjust dataframe for statistical analysis
 # calculate log of SOC stock (0-30cm)
 df_gf_sd$SOC_stock30_log <- log(df_gf_sd$SOC_stock30)
 
-# adjust year
-baseYear=min(df_gf_sd$observation_year)
-df_gf_sd$cYear <- df_gf_sd$observation_year - baseYear
+# # adjust year
+# baseYear=min(df_gf_sd$observation_year)
+# df_gf_sd$cYear <- df_gf_sd$observation_year - baseYear
 
 # add forest_cond (land cover with forest age 60 yrs cutoff in initial year, without gapfilling with Besnard forest age map)
 df_gf_sd <- df_gf_sd %>% 
@@ -1070,12 +1096,13 @@ df_gf_sd <- df_gf_sd %>%
       land_cover=="forest" & (is.na(successional_stage) & is.na(restoration_year) ) ~ "unknown forest"
     ))
 
- # forest age grouping from literature/source that supersede gapfilled stand age
+# forest age grouping from literature/source that supersede gapfilled stand age
 df_gf_sd <- df_gf_sd %>% 
   dplyr::mutate(
     forest_cond = case_when(
       siteID %in% c("L-AH-ECN", "L-DR-BF", "cnern-DHF", "cnern-ALF", "NEON-GUAN",
-                    "NEON-JERC") ~ "old forest",
+                    "NEON-JERC", "CentalIndia-MDDF", "CentalIndia-MF", "CentalIndia-MTF",
+                    "CentalIndia-SF", "CentalIndia-TMF") ~ "old forest",
       siteID=="NEON-OSBS"|siteID=="NEON-SCBI" ~ "young forest",
       TRUE ~ as.character(forest_cond) )
   ) %>%
@@ -1095,46 +1122,39 @@ df_gf_sd <- df_gf_sd %>%
   group_by(plotID) %>%
   arrange(observation_year) %>%
   dplyr::mutate(
-    stand_age_first_gf_besnard = first_observation_year - restoration_year_gf_besnard ) %>%
+    stand_age_first_gf_besnard = first(observation_year) - restoration_year_gf_besnard ) %>%
   ungroup() %>%
   dplyr::mutate(forest_cond_gf_besnard60 = case_when( # land cover and divided by condition
+    forest_cond=="young forest" ~ "young forest",
+    forest_cond=="old forest" ~ "old forest",
     land_cover=="grassland" ~ "grassland",
-    land_cover=="forest" & (stand_age_first_gf_besnard<60 | grepl("early|mid|late", successional_stage) ) ~ "young forest",
-    land_cover=="forest" & (stand_age_first_gf_besnard>=60 | grepl("mature|old growth", successional_stage) ) ~ "old forest",
+    land_cover=="forest" & (stand_age_first_gf_besnard<60 | grepl("early|mid|late", successional_stage)) ~ "young forest",
+    land_cover=="forest" & (stand_age_first_gf_besnard>=60 | grepl("mature|old growth", successional_stage)) ~ "old forest",
     land_cover=="forest" & (is.na(successional_stage) & is.na(restoration_year_gf_besnard) ) ~ "unknown forest"
   ))
-  # forest age grouping from literature/source that supersede gapfilled stand age
-df_gf_sd <- df_gf_sd %>% 
-  dplyr::mutate(
-    forest_cond_gf_besnard60 = case_when(
-      siteID %in% c("L-AH-ECN", "L-DR-BF", "cnern-DHF", "cnern-ALF", "NEON-GUAN",
-                    "NEON-JERC") ~ "old forest",
-      siteID=="NEON-OSBS"|siteID=="NEON-SCBI" ~ "young forest",
-      TRUE ~ as.character(forest_cond_gf_besnard60)
-    )
-  ) %>%
-  mutate(
-    forest_cond_gf_besnard60 = factor(forest_cond_gf_besnard60, 
-                                      levels=c("young forest","old forest","grassland"))
-  )
+
 
 # check
 unique(df_gf_sd$forest_cond)
 unique(df_gf_sd$forest_cond_gf_besnard60)
 
 # # save intermediate steps
-# save(df_gf_sd, file="./data/df_gf_sd_2024Jul09.rda")
-# write.csv(df_gf_sd, "./data/df_gf_sd_2024Jul09.csv", row.names = FALSE)
+# save(df_gf_sd, file="./data/df_gf_sd_2026Jul05.rda")
+# write.csv(df_gf_sd, "./data/df_gf_sd_2026Jul05.csv", row.names = FALSE)
 
 # filter out "unknown forest" category, add numeric column for forest age group
-df_known_age <- df_new %>% 
-  filter(forest_cond_gf_besnard60!="unknown forest")
+df_known_age <- df_gf_sd %>% 
+  filter(forest_cond_gf_besnard60!="unknown forest") %>%
+  mutate(
+    forest_cond_gf_besnard60 = factor(forest_cond_gf_besnard60, 
+                                      levels=c("young forest","old forest","grassland"))
+  )
 
-df_known_age %>% group_by(forest_cond_gf_besnard60_num) %>%
+df_known_age %>% group_by(forest_cond_gf_besnard60) %>%
   summarize(length(unique(siteID)),length(unique(plotID)))
 
 # # save intermediate step
-# save(df_known_age, file="./data/df_known_age_2024Jul09.rda")
+# save(df_known_age, file="./data/df_known_age_2026Jul05.rda")
 
 # prepare dataset for regression (plot level covariates and standardize)
 df_model <- df_known_age %>%
@@ -1147,19 +1167,45 @@ df_model <- df_known_age %>%
   filter(
     !is.na(clay_plo) & !is.na(ph_plo) & !is.na(n_pct_plo)  )
 
-# # save intermediate step
-# save(df_model, file="./data/df_model_2024Jul09.rda")
-
 # add column of whether forest plot age is gapfilled
-df_std <- df_model %>%
+df_model <- df_model %>%
   mutate(forest_age_gapfill = case_when(
-    grepl("grassland", forest_cond_gf_besnard60) ~ NA, # if not forest, NA
+    grepl("grassland|shrubland", forest_cond_gf_besnard60) ~ NA, # if not forest, NA
     siteID %in% c("L-AH-ECN", "L-DR-BF", "cnern-DHF", "cnern-ALF", "NEON-GUAN",
-                  "NEON-JERC","NEON-OSBS","NEON-SCBI") ~ FALSE, # if assigned from srouce info, F
+                  "NEON-JERC","CentalIndia-MDDF", "CentalIndia-MF", "CentalIndia-MTF",
+                  "CentalIndia-SF", "CentalIndia-TMF",
+                  "NEON-OSBS","NEON-SCBI") ~ FALSE, # if assigned from srouce info, F
     forest_cond=="young forest" ~ FALSE,
     forest_cond=="old forest" ~ FALSE,
     forest_cond=="unknown forest" ~ TRUE
-  )) %>%
+  )) 
+
+# # save intermediate step
+# save(df_model, file="./data/df_model_2024Jul09.rda")
+
+
+# # add in time series data (generated from 01_process_onetime_data.R in GlobalSOCChange)
+# load("/Users/jiaruofei/MIT Dropbox/Ruofei Jia/Exploration_analysis/GlobalSOCChange/data/SOC_TimeSeries_and_OneTime_for_analysis_2025Jul14.rda")
+# # rename
+# df_previous <- df_std_withOneTime; rm(df_std_withOneTime)
+# # delete standardized columns
+# df_previous <- df_previous %>%
+#   dplyr::select(-starts_with("std_"))
+# 
+# ## rbind time series data with 
+# # select same columns of df_timeseries in df_onetime
+# df_newTimeSeries_select <- df_newTimeSeries %>% 
+#   dplyr::select(colnames(df_previous))
+# 
+# identical(colnames(df_previous), colnames(df_newTimeSeries_select)) # TRUE
+# 
+# # rbind into entire df with time series and one time data, to be standardized together
+# df_unstd <- rbind(df_previous, df_newTimeSeries_select)
+# 
+# sapply(df_unstd, function(x) sum(is.na(x)))
+
+# standardize
+df_std <- df_model %>%  
   mutate( # standardize
     std_MAT_cru = (MAT_cru - mean(MAT_cru)) / sd(MAT_cru),
     std_MAP_cru = (MAP_cru - mean(MAP_cru)) / sd(MAP_cru),
@@ -1172,16 +1218,203 @@ df_std <- df_model %>%
 # keep only relevant columns
 df_std <- df_std %>%
   dplyr::select(siteID, plotID, profileID, lat, long, observation_year, 
-              SOC_stock30, SOC_stock30_log, abs30_rate_mgha_yr,
-              MAT_cru,MAP_cru, forest_cond_gf_besnard60, 
-              n_pct_plo,clay_plo,ph_plo,
-              mean_mat_site,mean_map_site,forest_age_gapfill,
-              std_MAT_cru,std_MAP_cru,std_year,
-              std_n_pct_plo,std_clay_plo,std_ph_plo
-              ) %>%
+                SOC_stock30, SOC_stock30_log, abs30_rate_mgha_yr,
+                MAT_cru,MAP_cru, forest_cond_gf_besnard60, 
+                n_pct_plo,clay_plo,ph_plo,
+                mean_mat_site,mean_map_site,forest_age_gapfill,
+                std_MAT_cru,std_MAP_cru,std_year,
+                std_n_pct_plo,std_clay_plo,std_ph_plo,
+                management, disturbance, waterlog
+  ) %>%
   ungroup()
-  
-# save final dataset ready for analysis
-save(df_std, file="./data/SOC_time_series_for_analysis.rda")
-write.csv(df_std, "./data/SOC_time_series_for_analysis.rda", row.names = FALSE)
 
+colSums(is.na(df_std))
+
+# convert $management and $disturbance to describe in Methods
+df_std <- df_std %>%
+  mutate(
+    known_grassland_grazing = case_when(
+      forest_cond_gf_besnard60!="grassland" ~ 0,
+      management=="managed (other than grazing and fire)" ~ 0,
+      grepl("graz",management) ~ 1,
+      TRUE ~ 0
+    ),
+    known_fire = case_when(
+      grepl("fire|FIRE", disturbance) ~ 1,
+      grepl("fire|FIRE", management) ~ 1,
+      management=="managed (other than grazing and fire)" ~ 0,
+      TRUE ~ 0
+    ),
+    known_management = case_when(
+      !is.na(management) & !grepl("unmanaged", management) ~ 1,
+      TRUE ~ 0
+    ),
+    known_disturbance = case_when(
+      grepl("undisturbed|no disturbance|no", disturbance) ~ 0,
+      !is.na(disturbance) ~ 1,
+      TRUE ~ 0
+    ),
+    management_all = case_when(
+      !is.na(management) & !grepl("unmanaged", management) ~ "managed",
+      grepl("unmanaged", management) ~ "unmanaged",
+      is.na(management) ~ "unknown"
+    ),
+    disturbance_all = case_when(
+      grepl("undisturbed|no disturbance|no", disturbance) ~ "monitored, no disturbance",
+      !is.na(disturbance) ~ "disturbance recorded",
+      is.na(disturbance) ~ "unknown"
+    )
+  ) %>%
+  mutate(
+    known_grassland_grazing = factor(known_grassland_grazing, levels=c(0,1)),
+    known_fire = factor(known_fire, levels=c(0,1)),
+    known_management = factor(known_management, levels=c(0,1)),
+    known_disturbance = factor(known_disturbance, levels=c(0,1)),
+    management_all = factor(management_all, levels = c("unknown", "unmanaged", "managed")),
+    disturbance_all = factor(disturbance_all, levels = c("unknown", "monitored, no disturbance", "disturbance recorded"))
+  )
+
+#------------------------- divide region and biome -----------------------------
+load(paste0(map_dir, "/proportion_decade_df.rda"))
+
+# assign climate zone to regions
+boreal_regions <- c("Canada","Northern Europe","Asian Russia","European Russia", "Alaska")
+temperate_regions <- c("Continental United States", "Europe", "China", "Japan and Korea", "Australia", 
+                       "New Zealand", "Other temperate", "Others")
+tropical_regions <- c("Africa", "Mexico and Central America", "South America", "Southeast Asia", "South Asia")
+
+
+site_region <- df_std %>% 
+  mutate(
+    # round the data lat long to nearest 0.25, 0.75 (center of 0.5 pixel)
+    x = round((long - 0.25) / 0.5) * 0.5 + 0.25,
+    y = round((lat  - 0.25) / 0.5) * 0.5 + 0.25
+  ) %>% 
+  # assign region based on rounded lat long
+  distinct(x,y,siteID, plotID, forest_cond_gf_besnard60) %>%
+  left_join(
+    proportion_decade_df, by = c("x", "y")
+  ) %>%
+  dplyr::mutate( # add zone
+    zone = case_when(
+      pan_region_new2 %in% tropical_regions ~ "tropical",
+      pan_region_new2 %in% temperate_regions ~ "temperate",
+      pan_region_new2 %in% boreal_regions ~ "boreal",
+      TRUE ~ NA
+    )
+  ) %>% 
+  dplyr::select(x,y,siteID,plotID,forest_cond_gf_besnard60,pan_region_new2,zone)
+
+# 2. identify zone of the rest of unknown sites based on rworldmap
+unknown_sites <- site_region %>% 
+  filter(is.na(zone)) 
+
+# 3, for the rest of unknown sites, infer manually from information in siteID
+unknown2 <- unknown_sites
+
+# infer zone from siteID
+unknown2 <- unknown2 %>%
+  mutate(pan_region_new2 = case_when(
+    grepl("ICP-15", siteID) ~ "Northern Europe",
+    grepl("ICP-59", siteID) ~ "Europe",
+    grepl("ICP-8", siteID) ~ "Europe",
+    grepl("ICP-11", siteID) ~ "Europe",
+    grepl("ICP-57", siteID) ~ "Europe",
+    grepl("ICP-95", siteID) ~ "Europe", # Canaries (Spain) but follow Pan et al, and put in Europe
+    grepl("lucas", siteID) ~ "Europe",
+    grepl("GUAN", siteID) ~ "Mexico and Central America"
+  )) %>%
+  mutate(
+    zone = case_when(
+      pan_region_new2 %in% tropical_regions ~ "tropical",
+      pan_region_new2 %in% temperate_regions ~ "temperate",
+      pan_region_new2 %in% boreal_regions ~ "boreal",
+      TRUE ~ NA
+    )
+  )
+
+site_region_known <- site_region %>%
+  filter(!is.na(zone))
+
+site_region_final <- rbind(site_region_known, unknown2) %>%
+  distinct(plotID,forest_cond_gf_besnard60,pan_region_new2,zone)
+
+test <- site_region_final %>% group_by(plotID) %>% filter(n()>1) # 0 rows. all unique to plot
+
+# merge region and zone to data
+df_std <- merge(df_std, site_region_final, by=c("plotID","forest_cond_gf_besnard60"), all.x=T)
+
+colSums(is.na(df_std))
+
+#------------ correct typo and delete outlier ----------------------------------
+# delete outlier ALF, super low BD not consistent with order of magnitude with its other replicate plot
+
+df_std <- df_std %>% filter(plotID!="cnern-ALF-ALFZH01ABC_02")
+
+# correct typo
+df_std <- df_std %>% mutate(
+  management = case_when(
+    management=="manamged (chaining)" ~ "managed (chaining)" ,
+    TRUE ~ management
+  ))
+
+#------------ save final results -----------------------------------------------
+# save
+save(df_std, file="./data/SOC_timeseries_for_analysis_2026Jul29.rda")
+write.csv(df_std,"./data/SOC_timeseries_for_analysis_2026Jul29.csv", row.names = FALSE)
+
+#------------ get description of sites and plots with management, disturbacne, waterlog ---------
+
+# waterlog
+waterlog_summary <- df_std %>% group_by(plotID) %>%
+  slice(1) %>%
+  group_by(substr(waterlog, 1,1)) %>%
+  summarize(n_distinct(siteID), n_distinct(plotID))
+
+# some sites have plots that are waterlogged and some aren't: 
+waterlog2 <- df_std %>% group_by(siteID) %>%
+  filter(n_distinct(substr(waterlog, 1,3))>1)
+
+# disturbance
+disturbance_summary <- df_std %>% mutate(
+  dist = case_when(
+    is.na(disturbance) ~ "no record",
+    disturbance=="no"|disturbance=="recorded as no disturbance"|disturbance=="undisturbed for >400 years" ~ "recorded, no disturbance",
+    TRUE ~ "disturbed"
+  )
+) %>% group_by(dist) %>%
+  summarize(n_distinct(siteID), n_distinct(plotID))
+
+# sites with different disturbance records across its replicate plots
+disturbance2 <- df_std %>% group_by(siteID) %>%
+  mutate(
+    dist = case_when(
+      is.na(disturbance) ~ "no record",
+      disturbance=="no"|disturbance=="recorded as no disturbance"|disturbance=="undisturbed for >400 years" ~ "recorded, no disturbance",
+      TRUE ~ "disturbed"
+    )
+  ) %>%
+  filter(n_distinct(dist)>1)
+
+# grassland grazing 
+grazing_summary <- df_std %>% filter(forest_cond_gf_besnard60=="grassland") %>% 
+  mutate(management2 = case_when(
+    is.na(management) ~ "no record",
+    grepl("unmanaged", management) ~ "not managed",
+    grepl("grazed|managed:grazing", management) ~ "grazed",
+    management=="managed (grazing, hay removal)"~ "grazed",
+    TRUE ~ "other management"
+  )) %>%
+  group_by(management2) %>%
+  summarize(n_distinct(siteID), n_distinct(plotID))
+
+
+# forest management
+forest_management_summary <- df_std %>% filter(grepl("forest", forest_cond_gf_besnard60)) %>% 
+  mutate(management2 = case_when(
+    is.na(management) ~ "no record",
+    grepl("unmanaged", management) ~ "not managed",
+    TRUE ~ "managed"
+  )) %>%
+  group_by(management2) %>%
+  summarize(n_distinct(siteID), n_distinct(plotID))

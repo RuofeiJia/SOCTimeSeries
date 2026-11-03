@@ -15,6 +15,7 @@ library(brms)
 
 # working directory should be set by default to the folder of entire repo (R project)
 
+
 #=========== load functions ===========================
 # function that convert raster to dataframe 
 raster2df <- function(layer) {
@@ -28,10 +29,8 @@ print("functions loaded")
 
 #================== load data and calculate mean and sd ========================
 # load data
-load("./data/SOC_withNewData_for_analysis.rda")
-df_std <- df_std_withNewData %>% filter(!is.na(siteID))
+load("./data/SOC_timeseries_for_analysis_2026Jul29.rda")
 
-rm(df_std_withNewData)
 
 # calculate mean and sd
 mean_year <- mean(df_std$observation_year)
@@ -88,14 +87,12 @@ all_coords <- raster2df(mat_1992) %>%
 mat_1992_df <- merge(x=all_coords, y=raster2df(mat_1992), by=c("x","y"), all.x=T) %>% arrange(x,y)
 mat_2000_df <- merge(x=all_coords, y=raster2df(mat_2000), by=c("x","y"), all.x=T) %>% arrange(x,y)
 mat_2010_df <- merge(x=all_coords, y=raster2df(mat_2010), by=c("x","y"), all.x=T) %>% arrange(x,y)
-#mat_2018_df <- merge(x=all_coords, y=raster2df(mat_2018), by=c("x","y"), all.x=T) %>% arrange(x,y)
 mat_2020_df <- merge(x=all_coords, y=raster2df(mat_2020), by=c("x","y"), all.x=T) %>% arrange(x,y)
 
 # MAP_year (do above onward)
 map_1992_df <- merge(x=all_coords, y=raster2df(map_1992), by=c("x","y"), all.x=T) %>% arrange(x,y)
 map_2000_df <- merge(x=all_coords, y=raster2df(map_2000), by=c("x","y"), all.x=T) %>% arrange(x,y)
 map_2010_df <- merge(x=all_coords, y=raster2df(map_2010), by=c("x","y"), all.x=T) %>% arrange(x,y)
-#map_2018_df <- merge(x=all_coords, y=raster2df(map_2018), by=c("x","y"), all.x=T) %>% arrange(x,y)
 map_2020_df <- merge(x=all_coords, y=raster2df(map_2020), by=c("x","y"), all.x=T) %>% arrange(x,y)
 
 # n_pct
@@ -412,6 +409,7 @@ identical(input_grassland2010_last$x, xvec_omit); identical(input_grassland2010_
 
 print("input dfs built")
 
+# omit save inputs. It has been saved with the run for model with all data
 # save inputs
 tic()
 save(
@@ -424,11 +422,11 @@ save(
   # grassland
   input_grassland1990_first,input_grassland1990_last,input_grassland2000_first,
   input_grassland2000_last,input_grassland2010_first,input_grassland2010_last,
-  file = "./results/post_processing_bayesian_cap2_new_inputs_brms1_37k12chain.rda")
+  file = "./results/post_processing_bayesian_cap2_new_inputs_timeseries_new.rda")
 toc()
-print("inputs data saved to post_processing_bayesian_cap2_new_inputs_brms1_37k12chain.rda")
+print("inputs data saved to post_processing_bayesian_cap2_new_inputs_timeseries_new.rda")
 #======================= load model ===========================
-load("./results/brms1_withOneTime_37k12chain.rda")
+load("./results/brms1_new_timeseries_cmd_3chain26k_50thin.rda")
 
 # assign name to model
 brms_mod <- brms1 #gamm_brms12 # withOneTime_brms1
@@ -599,8 +597,9 @@ save(
   delta_oldforest1990_df_listb,delta_oldforest2000_df_listb,delta_oldforest2010_df_listb,delta_oldforest_total_df_listb,
   # grassland
   delta_grassland1990_df_listb,delta_grassland2000_df_listb,delta_grassland2010_df_listb,delta_grassland_total_df_listb,
-  file = "./results/post_processing_bayesian_cap2_new_result_brms1_37k12chain.rda")
+  file = "./results/post_processing_bayesian_cap2_new_result_timeseries_new.rda")
 toc()
-print("prediction data saved to post_processing_bayesian_cap2_new_result_brms1_37k12chain.rda")
+print("prediction data saved to post_processing_bayesian_cap2_new_result_timeseries_new.rda")
+
 
 

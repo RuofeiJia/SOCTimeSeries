@@ -17,12 +17,32 @@ library(cowplot)
 library(sf)
 library(grid)
 library(gridExtra)
+library(pracma)
+library(ggridges)
+library(rnaturalearth)
+library(patchwork)
 
 # working directory should be set by default to the folder of entire repo (R project)
 
-map_dir <- "./data/"
+map_dir <- "./data"
 fig_dir <- "./figures"
+set.seed(1)
+
 #---------- load functions --------------------
+# define min and max of MAT, MAP without outliers (within 1.5*IQR from Q1 and Q3)
+find_min_wo_outliers <- function(numbers) {
+  quantile <- quantile(numbers) # returns 0%, 25%, 50%, 75%, 100%
+  iqr <- quantile[4] - quantile[2]
+  min <- max(quantile[2] - 1.5*iqr, quantile[1])
+  return(min)
+}
+find_max_wo_outliers <- function(numbers) {
+  quantile <- quantile(numbers) # returns 0%, 25%, 50%, 75%, 100%
+  iqr <- quantile[4] - quantile[2]
+  max <- min(quantile[4] + 1.5*iqr, quantile[5])
+  return(max)
+}
+
 # function that convert raster to dataframe 
 raster2df <- function(layer) {
   layer_spdf <- as(layer, "SpatialPixelsDataFrame")
@@ -62,168 +82,448 @@ plot_nsite <- function(nsite_df,type_str="young forest") {
 }
 
 # plot map of single value in scico color scheme
-plot_single_value <- function(delta_df, var_name="value", shrubland=F) {
+# apply pre-defined legend range to squish long tail
+plot_single_value_scico <- function(delta_df, var_name="value", legend_range="none",
+                                    panel_letter=NULL, panel_title=NULL, include_legend=FALSE,
+                                    legend_name=NULL) {
   # delta_df must have column x(lat), y(long), and a value column
   colnames(delta_df)[which(colnames(delta_df)==var_name)] <- "var"
   
-  # specify min max numbers in scale
-  min_val <- min(delta_df$var, na.rm=T)
-  max_val <- max(delta_df$var, na.rm=T)
+  # make legend guide spec
+  if (include_legend) {
+    guide_spec <- guide_colorbar(title.position = "top", 
+                                 title.hjust = 0.5,
+                                 barwidth = 10, 
+                                 barheight = 0.5)
+  } else {guide_spec <- "none" }
   
-  # # define legend
-  # if (shrubland) {
-  #   labels <- c(paste0("≤", scales::number_format(accuracy = 1)(min_val)), 
-  #               paste0("≥", scales::number_format(accuracy = 1)(max_val)))
-  # } else {
-  #   labels <- scales::number_format(accuracy = 1, scale = 1)(c(min_val, max_val))
-  # }
+  # set min max numbers in scale based on legend_range or plotted numbers
+  if (legend_range[1]=="none") {
+    min_val <- min(delta_df$var, na.rm=T)
+    max_val <- max(delta_df$var, na.rm=T)
+  } else {
+    min_val <- legend_range[1]
+    max_val <- legend_range[2]
+  }
   
-  ggplot(countries_sf) +
-    geom_sf(fill = "lightgray", col="gray", alpha=0.5) +
-    geom_tile(data=delta_df, aes(x=x, y=y, fill=var, color=var, width=1,height=1), alpha=1) +
+  # Create sf object with WGS84 coordinates
+  spatial_df <- st_as_sf(delta_df, coords = c("x", "y"), crs = 4326)
+  
+  # transform to robinson
+  spatial_df_robin <- st_transform(spatial_df, robinson_projection)
+  
+  # extract robinson coordinates
+  tiles_df <- as.data.frame(st_coordinates(spatial_df_robin)) %>%
+    bind_cols(st_drop_geometry(spatial_df_robin) %>% 
+                dplyr::select(var))
+  
+  p <- ggplot() +
+    # land shape as background
+    geom_sf(data=land, fill="grey40", color=NA) +
+    # tiles with color gradient
+    geom_tile(data = tiles_df,
+              aes(X, Y, fill = var),
+              width = tile_width, height = tile_height) +
+    # set scico scale
+    # oob=scales::squish compresses values outside limits to the boundary colors
     scico::scale_fill_scico(palette = "vik",
                             breaks=c(min_val, max_val),
-                            labels = labels) + 
-    scico::scale_color_scico(palette = "vik",
-                             breaks=c(min_val, max_val),
-                             labels = labels, guide = "none") + 
-    labs(x=NULL, y=NULL, fill=NULL) + 
-    theme_bw() +
-    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-          plot.title = element_blank(),
-          axis.title.x = element_blank(),  # Remove x-axis title
-          axis.title.y = element_blank(),  # Remove y-axis title
-          axis.text.x = element_blank(),    # Remove x-axis text
-          axis.text.y = element_blank(),    # Remove y-axis text
-          axis.ticks.x = element_blank(),   # Remove x-axis ticks
-          axis.ticks.y = element_blank())   # Remove y-axis ticks))
-  # plot.margin = margin(1, 1, 1, 1) makes margin too small
+                            labels = c(paste0("<= ",round(min_val,1)), paste0(">= ", round(max_val,1))),
+                            limits = c(min_val, max_val),
+                            oob = scales::squish,
+                            guide = guide_spec,
+                            name = legend_name) +
+    # Coordinate system for Robinson projection
+    coord_sf(crs = robinson_projection, expand = FALSE,
+             ylim = c(-6e6, 9.6e6)) +
+    # panel label (left top)
+    annotate("text", x = -1.6e7, y = 9.0e6, label = panel_letter, 
+             hjust = 0, size = 4.5, color = "grey15", fontface = "bold") +
+    # land cover label (left top, below panel letter)
+    annotate("text",  x = -1.5e7, y = 9.0e6, label = panel_title,
+             hjust = 0, size = 3.2, color = "grey30", fontface = "plain") +
+    # Theme
+    theme_void(base_size = 9) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA, linewidth = 0.3),
+      plot.margin = if(include_legend) margin(6, 0, 0, 0) else margin(6, 0, 2, 0),
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.title = element_text(size = 8.6, color = "grey30"),
+      legend.text = element_text(size = 8, color = "grey30")
+    )
+  
+  return(p)
 }
 # plot single value in viridis
-plot_single_value_viridis <- function(delta_df, var_name="value", shrubland=F) {
+# do not squish tail for these plots (predictor layer, land cover fraction)
+plot_single_value_viridis <- function(delta_df, var_name="value",legend_range="none",
+                                      panel_letter=NULL, panel_title=NULL, include_legend=FALSE, 
+                                      legend_name=NULL) {
   # delta_df must have column x(lat), y(long), and a value column
   colnames(delta_df)[which(colnames(delta_df)==var_name)] <- "var"
   
-  # specify min max numbers in scale
-  min_val <- min(delta_df$var)
-  max_val <- max(delta_df$var)
-  # define legend
-  if (shrubland) {
-    labels <- c(paste0("≤", scales::number_format(accuracy = 1)(min_val)), 
-                paste0("≥", scales::number_format(accuracy = 1)(max_val)))
+  # make legend guide spec
+  if (include_legend) {
+    guide_spec <- guide_colorbar(title.position = "top", 
+                                 title.hjust = 0.5,
+                                 barwidth = 10, 
+                                 barheight = 0.5)
+  } else {guide_spec <- "none" }
+  
+  # set min max numbers in scale based on legend_range or plotted numbers
+  if (legend_range[1]=="none") {
+    min_val <- min(delta_df$var, na.rm=T)
+    max_val <- max(delta_df$var, na.rm=T)
   } else {
-    labels <- scales::number_format(accuracy = 1, scale = 1)(c(min_val, max_val))
+    min_val <- legend_range[1]
+    max_val <- legend_range[2]
   }
   
-  ggplot(countries_sf) +
-    geom_sf(fill = "lightgray", col="gray", alpha=0.5) +
-    geom_tile(data=delta_df, aes(x=x, y=y, fill=var, color=var), alpha=1) +
-    scale_fill_viridis_c(option = "viridis",
-                         breaks=c(min_val, max_val),
-                         labels = labels) +
-    scale_color_viridis_c(option = "viridis",
-                          breaks=c(min_val, max_val),
-                          labels = labels, guide = "none") +
-    labs(x=NULL, y=NULL, fill=NULL) + 
-    theme_bw() +
-    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-          axis.title.x = element_blank(),  # Remove x-axis title
-          axis.title.y = element_blank(),  # Remove y-axis title
-          axis.text.x = element_blank(),    # Remove x-axis text
-          axis.text.y = element_blank(),    # Remove y-axis text
-          axis.ticks.x = element_blank(),   # Remove x-axis ticks
-          axis.ticks.y = element_blank(),   # Remove y-axis ticks))
-          legend.key.size = unit(0.4, "cm")
-    )   
-  # plot.margin = margin(1, 1, 1, 1) makes margin too small
-}
-# plot map of estimated change, negative=red, positive=blue
-plot_single_delta <- function(delta_df, var_name="fit_delta", shrubland=F) {
+  # Create sf object with WGS84 coordinates
+  spatial_df <- st_as_sf(delta_df, coords = c("x", "y"), crs = 4326)
   
-  # delta_df must have column x(lat), y(long), and a value column
-  colnames(delta_df)[which(colnames(delta_df)==var_name)] <- "var"
+  # transform to robinson
+  spatial_df_robin <- st_transform(spatial_df, robinson_projection)
   
-  # specify min max numbers in scale
-  min_val <- min(delta_df$var, na.rm=T)
-  max_val <- max(delta_df$var, na.rm=T)
+  # extract robinson coordinates
+  tiles_df <- as.data.frame(st_coordinates(spatial_df_robin)) %>%
+    bind_cols(st_drop_geometry(spatial_df_robin) %>% 
+                dplyr::select(var))
   
-  # define legend
-  if (shrubland) {
-    labels <- c(paste0("≤", scales::number_format(accuracy = 1)(min_val)), 
-                "0", 
-                paste0("≥", scales::number_format(accuracy = 1)(max_val)))
-  } else {
-    labels <- scales::number_format(accuracy = 1, scale = 1)(c(min_val, 0, max_val))
-  }
-  
-  # plot
-  p<-ggplot(countries_sf) +
-    geom_sf(fill = "lightgray", col="gray", alpha=0.5) +
-    #geom_sf(data=forest_biomes, fill = "darkgreen", col=NA, pwd=0.5, alpha=0.5) +
-    #geom_tile(data=ideal_layer_contour_df,aes(x=x, y=y), fill="darkgreen", alpha=0.5) +
-    geom_tile(data=delta_df, aes(x=x, y=y, fill=var, color=var, width=1, height=1), alpha=1) +
-    scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint =0,
-                         breaks=c(min_val, 0, max_val),
-                         labels = labels) +
-    scale_color_gradient2(low = "red", mid = "white", high = "blue", midpoint =0,
-                          breaks=c(min_val, 0, max_val),
-                          labels = labels, guide = "none") +
-    labs(x=NULL, y=NULL, fill=NULL) + 
-    #ggtitle(expression(paste(Delta, "SOC (Mg/ha) 0-30cm in young forests, 1992-2015"))) +
-    theme_bw() +
-    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-          axis.title.x = element_blank(),  # Remove x-axis title
-          axis.title.y = element_blank(),  # Remove y-axis title
-          axis.text.x = element_blank(),    # Remove x-axis text
-          axis.text.y = element_blank(),    # Remove y-axis text
-          axis.ticks.x = element_blank(),   # Remove x-axis ticks
-          axis.ticks.y = element_blank(),  # Remove y-axis ticks))
-          plot.margin = margin(2, 2, 2, 2), # 1,1,1,1 makes margin too small
-          legend.key.size = unit(0.4, "cm")
-    )   
+  p <- ggplot() +
+    # land shape as background
+    geom_sf(data=land, fill="grey40", color=NA) +
+    # tiles with color gradient
+    geom_tile(data = tiles_df,
+              aes(X, Y, fill = var),
+              width = tile_width, height = tile_height) +
+    # set scico scale
+    # oob=scales::squish compresses values outside limits to the boundary colors
+    scale_fill_viridis_c(breaks=c(min_val, max_val),
+                         labels = c(round(min_val,1), round(max_val,1)),
+                         oob = scales::squish,
+                         guide = guide_spec,
+                         name = legend_name) +
+    # Coordinate system for Robinson projection
+    coord_sf(crs = robinson_projection, expand = FALSE,
+             ylim = c(-6e6, 9.6e6)) +
+    # panel label (left top)
+    annotate("text", x = -1.6e7, y = 9.0e6, label = panel_letter, 
+             hjust = 0, size = 4.5, color = "grey15", fontface = "bold") +
+    # land cover label (left top, below panel letter)
+    annotate("text",  x = -1.5e7, y = 9.0e6, label = panel_title,
+             hjust = 0, size = 3.2, color = "grey30", fontface = "plain") +
+    # Theme
+    theme_void(base_size = 9) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA, linewidth = 0.3),
+      plot.margin = if(include_legend) margin(2, 0, 0, 0) else margin(2, 0, 2, 0),
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.title = element_text(size = 8.6, color = "grey30"),
+      legend.text = element_text(size = 8, color = "grey30")
+    )
   
   return(p)
 }
 
+# plot map of estimated change, negative=red, positive=blue
+plot_change_value <- function(delta_df, var_name="fit_delta", legend_range="none",
+                              panel_letter=NULL, panel_title=NULL, include_legend=FALSE,
+                              legend_name=NULL) {
+  # delta_df must have column x(lat), y(long), and a value column
+  colnames(delta_df)[which(colnames(delta_df)==var_name)] <- "var"
+  
+  # make legend guide spec
+  if (include_legend) {
+    guide_spec <- guide_colorbar(title.position = "top", 
+                                 title.hjust = 0.5,
+                                 barwidth = 10, 
+                                 barheight = 0.5)
+  } else {guide_spec <- "none" }
+  
+  # set min max numbers in scale based on legend_range or plotted numbers
+  if (legend_range[1]=="none") {
+    min_val <- min(delta_df$var, na.rm=T)
+    max_val <- max(delta_df$var, na.rm=T)
+  } else {
+    min_val <- legend_range[1]
+    max_val <- legend_range[2]
+  }
+  
+  # set conditional breaks and labels
+  # if minimal change is too close to zero, omit zero
+  breaks_list <- if (abs(min_val)>0.1*abs(max_val)) {
+    c(min_val, 0, max_val)
+  } else { c(min_val, max_val) }
+  
+  labels_list <- if (abs(min_val)>0.1*abs(max_val)) {
+    c(paste0("<= ", min_val), "0", paste0(">= ", max_val))
+  } else { c(paste0("<= ", min_val), paste0(">= ", max_val)) }
+  
+  # Create sf object with WGS84 coordinates
+  spatial_df <- st_as_sf(delta_df, coords = c("x", "y"), crs = 4326)
+  
+  # transform to robinson
+  spatial_df_robin <- st_transform(spatial_df, robinson_projection)
+  
+  # extract robinson coordinates
+  tiles_df <- as.data.frame(st_coordinates(spatial_df_robin)) %>%
+    bind_cols(st_drop_geometry(spatial_df_robin) %>% 
+                dplyr::select(var))
+  
+  p <- ggplot() +
+    # land shape as background
+    geom_sf(data=land, fill="grey40", color=NA) +
+    # tiles with color gradient
+    geom_tile(data = tiles_df,
+              aes(X, Y, fill = var),
+              width = tile_width, height = tile_height) +
+    # set scico scale
+    # oob=scales::squish compresses values outside limits to the boundary colors
+    scale_fill_gradient2(
+      low = color_decrease, mid = color_neutral, high = color_increase,
+      midpoint = 0, limits = c(min_val, max_val),
+      oob = scales::squish,
+      breaks = breaks_list,
+      labels = labels_list,
+      name = legend_name,
+      guide = guide_spec
+    ) +
+    # Coordinate system for Robinson projection
+    coord_sf(crs = robinson_projection, expand = FALSE,
+             ylim = c(-6e6, 9.6e6)) +
+    # panel label (left top)
+    annotate("text", x = -1.6e7, y = 9.0e6, label = panel_letter, 
+             hjust = 0, size = 4.5, color = "grey15", fontface = "bold") +
+    # land cover label (left top, below panel letter)
+    annotate("text",  x = -1.5e7, y = 9.0e6, label = panel_title,
+             hjust = 0, size = 3.2, color = "grey30", fontface = "plain") +
+    # Theme
+    theme_void(base_size = 9) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA, linewidth = 0.3),
+      plot.margin = if(include_legend) margin(2, 0, 0, 0) else margin(2, 0, 2, 0),
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.title = element_text(size = 8.6, color = "grey30"),
+      legend.text = element_text(size = 8, color = "grey30")
+    )
+  
+  return(p)
+}
+
+# function that plot magnitude of sink change
+plot_sink_change_magnitude <- function(df_name = "summary_diff_youngforest_1990s_2000s",
+                                       panel_letter = "a",
+                                       decade_lab_str = "2000s minus 1990s",
+                                       include_legend = FALSE
+) {
+  
+  # get dataframe
+  summary <- get(df_name)
+  
+  # land cover
+  landcover_str <- unique(summary$type)
+  
+  # Determine significance: percentage_above_zero > 0.95 or < 0.05
+  summary <- summary %>%
+    mutate(
+      is_significant = (percentage_above_zero > 0.95) | (percentage_above_zero < 0.05),
+      tile_color = ifelse(is_significant, diff_mean, 0)
+    )
+  
+  # Create sf object with WGS84 coordinates
+  spatial_df <- st_as_sf(summary, coords = c("x", "y"), crs = 4326)
+  
+  # transform to robinson
+  spatial_df_robin <- st_transform(spatial_df, robinson_projection)
+  
+  # extract robinson coordinates
+  tiles_df <- as.data.frame(st_coordinates(spatial_df_robin)) %>%
+    bind_cols(st_drop_geometry(spatial_df_robin) %>% 
+                dplyr::select(tile_color, is_significant))
+  
+  # separate significant and non-significant tiles
+  tiles_nonsignificant <- filter(tiles_df, !is_significant)
+  tiles_significant <- filter(tiles_df, is_significant)
+  
+  # make legend guide spec
+  if (include_legend) {
+    guide_spec <- guide_colorbar(title.position = "top", 
+                                 title.hjust = 0.5,
+                                 barwidth = 10, 
+                                 barheight = 0.5)
+  } else {
+    guide_spec <- "none"
+  }
+  
+  # Create plot
+  plot_output <- ggplot() +
+    # land shape as background
+    geom_sf(data=land, fill="grey40", color=NA) +
+    # Plot non-significant tiles in gray first (background layer)
+    geom_tile(data = tiles_nonsignificant,
+              aes(X, Y),
+              fill = color_sink_change_nonsignificant, color=NA, width = tile_width, height = tile_height, alpha = 1) +
+    # Plot significant tiles with color gradient
+    geom_tile(data = tiles_significant,
+              aes(X, Y, fill = tile_color),
+              width = tile_width, height = tile_height) +
+    # Color scale: red for decrease, green for increase
+    # oob=scales::squish compresses values outside limits to the boundary colors
+    scale_fill_gradient2(
+      low = color_sink_decrease, mid = color_sink_neutral, high = color_sink_increase,
+      midpoint = 0, limits = c(-magnitude_limit, magnitude_limit),
+      oob = scales::squish,
+      breaks = c(-magnitude_limit, 0, magnitude_limit),
+      labels = c(paste0("<= -", magnitude_limit, "\n(weakened)"), 
+                 "0", 
+                 paste0(">= +", magnitude_limit, "\n(strengthened)")),
+      name = paste0("Magnitude of SOC rate change:\n",decade_lab_str," (Mg C ha-1 yr-1)"),
+      guide = guide_spec
+    ) +
+    # Coordinate system for Robinson projection
+    coord_sf(crs = robinson_projection, expand = FALSE,
+             ylim = c(-6e6, 8.5e6)) +
+    # panel label (left top)
+    annotate("text", x = -1.6e7, y = 7.9e6, label = panel_letter, 
+             hjust = 0, size = 4.5, color = "grey15", fontface = "bold") +
+    # land cover label (left top, below panel letter)
+    annotate("text",  x = -1.5e7, y = 7.9e6, label = landcover_str,
+             hjust = 0, size = 3.2, color = "grey30", fontface = "plain") +
+    # Theme
+    theme_void(base_size = 9) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA, linewidth = 0.3),
+      plot.margin = if(include_legend) margin(2, 0, 0, 0) else margin(2, 0, 2, 0),
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.title = element_text(size = 8.6, color = "grey30"),
+      legend.text = element_text(size = 8, color = "grey30")
+    )
+  
+  return(plot_output)
+}
+
+# function that plot probability of sink change
+plot_sink_change_probability <- function(df_name = "summary_diff_youngforest_1990s_2000s",
+                                         panel_letter = "a",
+                                         include_legend = FALSE
+) {
+  
+  # get dataframe
+  summary <- get(df_name)
+  
+  # land cover
+  landcover_str <- unique(summary$type)
+  
+  # transform ercentage_above_zero of sink change to signed probability
+  summary <- summary %>%
+    mutate(
+      signed_probability = 2 * percentage_above_zero - 1,
+      is_significant = (percentage_above_zero > 0.95) | (percentage_above_zero < 0.05)
+    )
+  
+  # Create sf object with WGS84 coordinates
+  spatial_df <- st_as_sf(summary, coords = c("x", "y"), crs = 4326)
+  
+  # transform to robinson
+  spatial_df_robin <- st_transform(spatial_df, robinson_projection)
+  
+  # extract robinson coordinates
+  tiles_df <- as.data.frame(st_coordinates(spatial_df_robin)) %>%
+    bind_cols(st_drop_geometry(spatial_df_robin) %>% 
+                dplyr::select(signed_probability, is_significant))
+  
+  # make legend guide spec
+  if (include_legend) {
+    guide_spec <- guide_colorbar(title.position = "top", 
+                                 title.hjust = 0.5,
+                                 barwidth = 10, 
+                                 barheight = 0.5)
+  } else {
+    guide_spec <- "none"
+  }
+  
+  # Create plot
+  plot_output <- ggplot() +
+    # land shape as background
+    geom_sf(data=land, fill="grey40", color=NA) +
+    # Plot all tiles with probability color gradient
+    geom_tile(data = tiles_df,
+              aes(X, Y, fill = signed_probability),
+              width = tile_width, height = tile_height, color = NA) +
+    # Color scale with sharp threshold lines at ±0.95
+    scale_fill_gradientn(
+      colors = color_palette_sink_change_probability,
+      values = scales::rescale(as.numeric(names(color_palette_sink_change_probability)), 
+                               to = c(0, 1), from = c(-1, 1)),
+      limits = c(-1, 1),
+      oob = scales::squish,
+      # -0.9, 0.9 is 0.05-0.95 after transformed to have sign
+      breaks = c(-1, -0.9, 0, 0.9, 1),
+      labels = c("weakened\n(>95% decrease)", "", "no detectable\nchange", "", "strengthened\n(>95% increase)"),
+      name = "Probability of SOC rate change", # \n(signed: 2*P(strengthened)-1)
+      guide = guide_spec
+    ) +
+    # Coordinate system for Robinson projection
+    coord_sf(crs = robinson_projection, expand = FALSE,
+             ylim = c(-6e6, 8.5e6)) +
+    # panel label (left top)
+    annotate("text", x = -1.6e7, y = 7.9e6, label = panel_letter, 
+             hjust = 0, size = 4.5, color = "grey15", fontface = "bold") +
+    # land cover label (left top, below panel letter)
+    annotate("text",  x = -1.5e7, y = 7.9e6, label = landcover_str,
+             hjust = 0, size = 3.2, color = "grey30", fontface = "plain") +
+    # Theme
+    theme_void(base_size = 9) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA, linewidth = 0.3),
+      plot.margin = if(include_legend) margin(2, 0, 0, 0) else margin(2, 0, 2, 0),
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.title = element_text(size = 8.6, color = "grey30"),
+      legend.text = element_text(size = 8, color = "grey30")
+    )
+  return(plot_output)
+}
 #---------- load and prepare data -------------------------
-# new dataset (final object name: df_std)
-load("./data/SOC_withNewData_for_analysis.rda")
-df_std <- df_std_withNewData; rm(df_std_withNewData)
-
-# time series data
-df_std_ts <- df_std %>% filter(!grepl("OLM-", siteID)) %>%
-  mutate(data_type="Time series") %>%
-  mutate(data_type=factor(data_type, levels=c("Time series", "Single time")))
-
-# one time data
-df_onetime <- df_std %>% filter(grepl("OLM-", siteID)) %>%
-  mutate(data_type="Single time") %>%
-  mutate(data_type=factor(data_type, levels=c("Time series", "Single time")))
+# # time series dataset (final object name: df_std)
+load("./data/SOC_timeseries_for_analysis_2026Jul29.rda")
 
 # pixel level results
-load("./results/find_CI_bayesian_cap2_exclude_same_extent_pixel_summary.RData")
-# load input predictor data
-load("./results/predicted_inputs_brms1_37k12chain.rda") # all applicable and predicted pixels in separate dataframes, with land use proportion >0
+load("./results/find_CI_bayesian_cap2_exclude_ts_extent_pixel_summary_timeseries_new.RData")
+# load input predictor data of all applicable pixels
+load("./results/post_processing_bayesian_cap2_new_inputs_timeseries_new.rda")
+# all and predicted pixels in separate dataframes, with land use proportion >0
+load("./results/predicted_inputs_ts_extent_timeseries_new.rda") 
+# load sink change results
+load("./results/find_CI_bayesian_cap2_exclude_ts_extent_pixel_summary_timeseries_new_diff.RData")
 # load land cover extent
-load(paste0(map_dir, "proportion_decade_df.rda"))
+load("./data/proportion_decade_df.rda")
 
 # load model
-# load("./results/gamm_brms12.rda") # change this
-# mod <- gamm_brms12
-load("./results/brms1_withOneTime_37k12chain.rda")
+load("./results/brms1_new_timeseries_cmd_3chain26k_50thin.rda")
 mod <- brms1; rm(brms1)
 
 # input layers (code to generate these files is in 00_download_prepare_spatial_data.R)
 # mat_1992
-mat_1992 <- raster(paste0(map_dir, "mat_1992.tif"))
+mat_1992 <- raster(paste0(map_dir, "/mat_1992.tif"))
 # map_1992
-map_1992 <- raster(paste0(map_dir, "map_1992.tif"))
+map_1992 <- raster(paste0(map_dir, "/map_1992.tif"))
 # n_pct
-n_pct <- raster(paste0(map_dir, "n_sg_halfdegree.tif"))
+n_pct <- raster(paste0(map_dir, "/n_sg_halfdegree.tif"))
 # clay
-clay <- raster(paste0(map_dir, "clay_sg_halfdegree.tif"))
+clay <- raster(paste0(map_dir, "/clay_sg_halfdegree.tif"))
 # ph
-ph <- raster(paste0(map_dir, "ph_sg_halfdegree.tif"))
+ph <- raster(paste0(map_dir, "/ph_sg_halfdegree.tif"))
 
 # convert tifs to df
 mat_1992_df <- raster2df(mat_1992)
@@ -232,26 +532,28 @@ n_pct_df <- raster2df(n_pct)
 clay_df <- raster2df(clay)
 ph_df <- raster2df(ph)
 
-# # load world administrative boundaries
-# # https://public.opendatasoft.com/explore/dataset/world-administrative-boundaries/export/?flg=en-us
-basemap_dir <- "./data"
-countries_sf <- read_sf(paste0(basemap_dir, "world-administrative-boundaries/world-administrative-boundaries.shp"))
+# load world administrative boundaries
+# https://public.opendatasoft.com/explore/dataset/world-administrative-boundaries/export/?flg=en-us
+basemap_dir <- map_dir
+countries_sf <- read_sf(paste0(basemap_dir, "/world-administrative-boundaries/world-administrative-boundaries.shp"))
 countries_sf <- st_make_valid(countries_sf)
 countries_sf <- st_transform(countries_sf, 4326)
 
-# OR define min and max of MAT, MAP without outliers (within 1.5*IQR from Q1 and Q3)
-find_min_wo_outliers <- function(numbers) {
-  quantile <- quantile(numbers) # returns 0%, 25%, 50%, 75%, 100%
-  iqr <- quantile[4] - quantile[2]
-  min <- max(quantile[2] - 1.5*iqr, quantile[1])
-  return(min)
-}
-find_max_wo_outliers <- function(numbers) {
-  quantile <- quantile(numbers) # returns 0%, 25%, 50%, 75%, 100%
-  iqr <- quantile[4] - quantile[2]
-  max <- min(quantile[4] + 1.5*iqr, quantile[5])
-  return(max)
-}
+# get land shape in robinson projection
+robinson_projection <- "+proj=robin +datum=WGS84"
+land <- st_transform(st_union(st_make_valid(ne_countries(scale=50, returnclass="sf"))), robinson_projection)
+# tile with and height for 0.5 degree resolution
+tile_width <- 6.5e4
+tile_height <- 6.5e4
+
+# load region boundaries (Pan et al. regions)
+region_boundaries <- st_transform(
+  st_make_valid(st_read("./data/pan_regions.gpkg", quiet = TRUE)),
+  crs = robinson_projection
+)
+# make raster template
+raster_template <- rast(xmin = -180, xmax = 180, ymin = -90, ymax = 90,
+                        resolution = 0.5, crs = "EPSG:4326")
 
 # set min and max values without outliers
 # young forest
@@ -290,16 +592,16 @@ minph_g <- find_min_wo_outliers(df_std[df_std$forest_cond_gf_besnard60=="grassla
 
 #---------- define palettes ----------------------------------------------------
 type_palette <- c(
-  "young forest" = "#c8445b",
-  "old forest" = "#4d5ca1",
-  "grassland" = "#66aa8b"
+  "grassland" = "#E1A02A", 
+  "young forest" = "#3C8DC4", 
+  "old forest" = "#8064B0"
 )
 
-# use this website to lighten 30% https://mdigi.tools/lighten-color/#c8445b
+# use this website to lighten 50% https://mdigi.tools/lighten-color/#c8445b
 type_palette_light <- c(
-  "young forest" = "#de8f9d", 
-  "old forest" = "#919bca",
-  "grassland" = "#a3ccb9"
+  "grassland" = "#f0cf94", 
+  "young forest" = "#9dc6e1",
+  "old forest" = "#bfb1d7"
 )
 
 shape_palette <- c(
@@ -315,324 +617,559 @@ extrapolation_variable_palette <- c(
   "soil pH"="#F0E442"
 )
 
+# define colors for SOC change at pixel level (follow main figure color scheme)
+color_increase <- "#2E8B7D"
+color_decrease <- "#C97E3C"
+color_neutral <- "gray80"
+
+# define colors for SOC sink change
+# slightly different gradient to distinguish between SOC change and sink change
+# Blue for weakened sink, Orange for strengthened sink, Gray for neutral
+color_sink_increase <- "#4575B4"
+color_sink_decrease <- "#E41A1C"
+color_sink_neutral <- "#F5F5F5"
+color_sink_change_nonsignificant <- "gray70"
+
+# Define color palette with sharp thresholds at ±0.95 (95% CI boundary)
+# the scale was c(-1,1). -0.9 represents 5% percentile
+color_palette_sink_change_probability <- c(
+  "-1.0" = "#7F1616",      # Dark teal (extreme weakened)
+  "-0.9001" = "#7F1616",   # Dark teal
+  "-0.9" = "#202020",      # Dark threshold line
+  "-0.8999" = "#F8D4D3",   # Light blue-green
+  "0.0" = "#F5F5F5",       # Center (off-white, no clear change)
+  "0.8999" = "#A8C5E0",    # Light orange
+  "0.9" = "#202020",       # Dark threshold line
+  "0.9001" = "#1F3F5C",    # Dark orange
+  "1.0" = "#1F3F5C"        # Dark orange (extreme strengthened)
+)
+
 theme_set(theme_minimal(base_family = "Helvetica", base_size = 14))
 
-#-----------------Figure S1 data distribution-----------------------------------
-# (a) soil data on world map
+#-----------------Figure Extended Data 1. Est. map and SE 1992-2000 --------------------------
+# legend range for pixel level SOC change per area
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate <- c(summary_youngforest1990$annual_mean,
+                  summary_oldforest1990$annual_mean,
+                  summary_grassland1990$annual_mean)
+SOC_rate_limits <- c(round(quantile(all_SOC_rate, 0.025, na.rm = TRUE), 1),
+                     round(quantile(all_SOC_rate, 0.975, na.rm = TRUE), 1) )
 
-df_std_plot <- df_std %>%
-  mutate(data_type=ifelse(grepl("OLM-", siteID), "Single time", "Time series")) %>%
-  mutate(data_type=factor(data_type, levels=c( "Single time", "Time series"))) %>%
-  arrange(data_type)
+# legend range for SE of pixel level SOC change 
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate_se <- c(summary_youngforest1990$annual_sd,
+                     summary_oldforest1990$annual_sd,
+                     summary_grassland1990$annual_sd)
+SOC_se_limits <- c(round(quantile(all_SOC_rate_se, 0.025, na.rm = TRUE), 1),
+                   round(quantile(all_SOC_rate_se, 0.975, na.rm = TRUE), 1) )
 
-# try to show time series and onetime data on one map
-p_data_map <- 
-  ggplot(countries_sf) +
-  geom_sf(fill = "lightgray", col="gray", alpha=0.5) +
-  geom_point(data=df_onetime, aes(x=long, y=lat, color = forest_cond_gf_besnard60, fill = forest_cond_gf_besnard60, shape=data_type), 
-             alpha=1, size=1.2, stroke=0.1) +
-  scale_shape_manual(values = shape_palette) +
-  scale_color_manual(values = type_palette_light, guide="none") +
-  scale_fill_manual(values = type_palette_light, guide="none") +
-  new_scale_fill() +
-  geom_point(data=df_std_ts, aes(x=long, y=lat, fill = forest_cond_gf_besnard60, shape=data_type), 
-             color="black", alpha=1, size=1.2, stroke = 0.1) +
-  scale_fill_manual(values = type_palette,
-                    labels = c("Young forest", "Old forest", "Grassland")) +
-  labs(tag="a", x=NULL, y=NULL) +
-  theme_bw() +
-  theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
-        legend.title=element_blank(),
-        axis.ticks.x = element_blank(),axis.text.x = element_blank(),
-        legend.position = "bottom") + 
-  guides(shape = guide_legend(order=1, override.aes = list(
-    shape=c(16,22), color=c("gray70","black"), fill=c("gray70", "gray40"), stroke=0.5, size = 3)),
-    fill = guide_legend(order=2, override.aes = list(shape=21, color=NA, size = 3)) )
+# legend range for pixel-level total SOC stock change
+# squish tails <2.5% and >97.5% to same color
+all_SOC_total_change <- c(summary_youngforest1990$annual_mean_GgperPixel,
+                          summary_oldforest1990$annual_mean_GgperPixel,
+                          summary_grassland1990$annual_mean_GgperPixel)
+total_change_limits <- c(round(quantile(all_SOC_total_change, 0.025, na.rm = TRUE), 1),
+                         round(quantile(all_SOC_total_change, 0.975, na.rm = TRUE), 1) )
 
-p_data_map
+# plot pixel level SOC rates
+avg_grassland <- plot_change_value(summary_grassland1990, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="grassland 1992-2000", include_legend=F,legend_name=NULL)
 
-# (b) number of sites vs. year
+avg_youngforest <- plot_change_value(summary_youngforest1990, "annual_mean",
+                                     legend_range = SOC_rate_limits, panel_letter="",
+                                     panel_title="young forest 1992-2000", include_legend=F,legend_name=NULL)
 
-# plot
-p_data_year <- ggplot(df_std_plot) +
-  geom_histogram(aes(x = observation_year, alpha=data_type, fill=forest_cond_gf_besnard60),
-                 binwidth = 1, position = "stack") +
-  scale_alpha_manual(values = c("Time series" = 1, "Single time" = 0.7), name=NULL) + # guide="none"
-  scale_fill_manual(values = type_palette, guide="none") +
-  facet_wrap(~forest_cond_gf_besnard60, nrow = 1, 
-             labeller = labeller(
-               forest_cond_gf_besnard60 = 
-                 c("young forest"="Young forest",
-                   "old forest"="Old forest",
-                   "grassland"="Grassland"))
-  ) +
-  labs(tag="b",x = "Year",y = "Number of observation") +
-  guides(alpha = guide_legend(override.aes = list(alpha=c(0.4,1), size = 3))
-  ) +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    legend.position = "right"
-  )
+avg_oldforest <- plot_change_value(summary_oldforest1990, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="old forest 1992-2000", include_legend=T,legend_name="mean SOC rate (Mg C/ha yr-1)")
 
-p_data_year
+# plot standard error
+sd_grassland <- plot_single_value_scico(summary_grassland1990, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="grassland 1992-2000", include_legend=F, legend_name=NULL)
 
-# assemble
-fig_S1_data_distribution <- grid.arrange(p_data_map, p_data_year, 
-                                         ncol=1, heights=c(1,1))
+sd_youngforest <- plot_single_value_scico(summary_youngforest1990, var_name="annual_sd", 
+                                          legend_range = SOC_se_limits,
+                                          panel_title="young forest 1992-2000", include_legend=F, legend_name=NULL)
 
-# save
-ggsave(paste0(fig_dir, "/figureS1_data_distribution.png"), 
-       plot = fig_S1_data_distribution, 
-       bg = "white", dpi = 600, width = 183 / 25.4, height = 160 / 25.4, units = "in")
+sd_oldforest <- plot_single_value_scico(summary_oldforest1990, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="old forest 1992-2000", include_legend=T, legend_name="standard error (Mg C/ha yr-1)")
 
-#-----------------Figure S2 data coverage compared to biome and prediction-----
+# plot aggregated total pixel SOC change 
+total_grassland <- plot_change_value(summary_grassland1990, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="grassland 1992-2000", include_legend=F,legend_name=NULL)
 
-# data against whittaker plot (with rate)
-df_change <- df_std_ts %>% group_by(plotID) %>%
-  arrange(plotID, observation_year) %>%
-  filter(observation_year!=first(observation_year)) %>% # delete first observation
-  #dplyr::slice_tail(n=1) %>% # keep only rate from first to last observation
-  ungroup() %>%
-  dplyr::mutate( # calculate rate
-    SOC_rate = abs30_rate_mgha_yr
-  ) %>%
-  mutate( # truncate outliers
-    SOC_rate_less10 = case_when(
-      SOC_rate > 10 ~ 10,
-      SOC_rate < -10 ~ -10,
-      TRUE ~ SOC_rate
-    ),
-    SOC_rate_sqrt = case_when(
-      SOC_rate>0 ~ sqrt(SOC_rate_less10),
-      SOC_rate<=0 ~ -1*sqrt(abs(SOC_rate_less10)))
-  )
+total_youngforest <- plot_change_value(summary_youngforest1990, "annual_mean_GgperPixel",
+                                       legend_range = total_change_limits, panel_letter="",
+                                       panel_title="young forest 1992-2000", include_legend=F,legend_name=NULL)
 
-# create labels for color scale
-min_rate <- min(df_change$SOC_rate_sqrt)
-max_rate <- max(df_change$SOC_rate_sqrt)
-labels <- c(paste0("≤", -10),
-            "0", 
-            paste0("≥", 10))
+total_oldforest <- plot_change_value(summary_oldforest1990, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="old forest 1992-2000", include_legend=T,legend_name="total SOC change per 0.5° pixel (Gg C yr-1)")
 
-p_whittaker_rate <- whittaker_base_plot() + 
-  new_scale_fill() +
-  facet_wrap(~forest_cond_gf_besnard60,
-             nrow = 1, 
-             labeller = labeller(
-               forest_cond_gf_besnard60 = 
-                 c("young forest"="Young forest",
-                   "old forest"="Old forest",
-                   "grassland"="Grassland")) ) +
-  geom_point(data=df_onetime, 
-             aes(x=mean_mat_site,y=mean_map_site/10,
-                 shape=data_type), # color=forest_cond_gf_besnard60, fill=forest_cond_gf_besnard60, 
-             color="gray", fill="gray", size=1, alpha=1, stroke=0.1) +
-  scale_shape_manual(values = shape_palette, guide="none") +
-  scale_color_manual(values = type_palette_light, guide="none") +
-  scale_fill_manual(values = type_palette_light, guide="none") +
-  new_scale_fill() +
-  geom_point(data=df_change, 
-             aes(x=mean_mat_site,y=mean_map_site/10, 
-                 fill = SOC_rate_sqrt, shape=data_type), 
-             color="black", alpha=1, size=1, stroke = 0.1) +
-  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint =0, # low read, high blue
-                       breaks=c(min_rate,  0, max_rate),
-                       labels = labels, name="SOC change from time series \n (Mg C ha-1 yr-1)",
-                       guide = guide_colorbar(order = 1)) +
-  labs() +
-  theme_bw() + 
-  theme(lgend.position="right")
+# Combine 9 panels in 3 columns x 3 rows layout
+p_1992_2000 <- 
+  (avg_grassland | sd_grassland | total_grassland) /
+  (avg_youngforest | sd_youngforest | total_youngforest) /
+  (avg_oldforest | sd_oldforest | total_oldforest) +
+  plot_layout(heights = c(1, 1, 1.2)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
 
-p_whittaker_rate
+ggsave(paste0(fig_dir, "/figureS?_1992_2000_SOCchange.png"), 
+       plot = p_1992_2000, bg = "white", dpi = 600, width = 200 / 25.4, height = 150 / 25.4, units = "in")
 
-# save
-ggsave(paste0(fig_dir, "/figureS2_whittaker_rate.png"), 
-       plot = p_whittaker_rate, bg = "white", dpi = 600, width = 183 / 25.4, height = 130 / 25.4, units = "in")
+#-----------------Figure Extended Data 2. Est. map and SE 2000-2010 --------------------------
+# legend range for pixel level SOC change per area
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate <- c(summary_youngforest2000$annual_mean,
+                  summary_oldforest2000$annual_mean,
+                  summary_grassland2000$annual_mean)
+SOC_rate_limits <- c(round(quantile(all_SOC_rate, 0.025, na.rm = TRUE), 1),
+                     round(quantile(all_SOC_rate, 0.975, na.rm = TRUE), 1) )
+
+# legend range for SE of pixel level SOC change 
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate_se <- c(summary_youngforest2000$annual_sd,
+                     summary_oldforest2000$annual_sd,
+                     summary_grassland2000$annual_sd)
+SOC_se_limits <- c(round(quantile(all_SOC_rate_se, 0.025, na.rm = TRUE), 1),
+                   round(quantile(all_SOC_rate_se, 0.975, na.rm = TRUE), 1) )
+
+# legend range for pixel-level total SOC stock change
+# squish tails <2.5% and >97.5% to same color
+all_SOC_total_change <- c(summary_youngforest2000$annual_mean_GgperPixel,
+                          summary_oldforest2000$annual_mean_GgperPixel,
+                          summary_grassland2000$annual_mean_GgperPixel)
+total_change_limits <- c(round(quantile(all_SOC_total_change, 0.025, na.rm = TRUE), 1),
+                         round(quantile(all_SOC_total_change, 0.975, na.rm = TRUE), 1) )
+
+# plot pixel level SOC rates
+avg_grassland <- plot_change_value(summary_grassland2000, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="grassland 2000-2010", include_legend=F,legend_name=NULL)
+
+avg_youngforest <- plot_change_value(summary_youngforest2000, "annual_mean",
+                                     legend_range = SOC_rate_limits, panel_letter="",
+                                     panel_title="young forest 2000-2010", include_legend=F,legend_name=NULL)
+
+avg_oldforest <- plot_change_value(summary_oldforest2000, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="old forest 2000-2010", include_legend=T,legend_name="mean SOC rate (Mg C/ha yr-1)")
+
+# plot standard error
+sd_grassland <- plot_single_value_scico(summary_grassland2000, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="grassland 2000-2010", include_legend=F, legend_name=NULL)
+
+sd_youngforest <- plot_single_value_scico(summary_youngforest2000, var_name="annual_sd", 
+                                          legend_range = SOC_se_limits,
+                                          panel_title="young forest 2000-2010", include_legend=F, legend_name=NULL)
+
+sd_oldforest <- plot_single_value_scico(summary_oldforest2000, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="old forest 2000-2010", include_legend=T, legend_name="standard error (Mg C/ha yr-1)")
+
+# plot aggregated total pixel SOC change 
+total_grassland <- plot_change_value(summary_grassland2000, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="grassland 2000-2010", include_legend=F,legend_name=NULL)
+
+total_youngforest <- plot_change_value(summary_youngforest2000, "annual_mean_GgperPixel",
+                                       legend_range = total_change_limits, panel_letter="",
+                                       panel_title="young forest 2000-2010", include_legend=F,legend_name=NULL)
+
+total_oldforest <- plot_change_value(summary_oldforest2000, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="old forest 2000-2010", include_legend=T,legend_name="total SOC change per 0.5° pixel (Gg C yr-1)")
+
+# Combine 9 panels in 3 columns x 3 rows layout
+p_2000_2010 <- 
+  (avg_grassland | sd_grassland | total_grassland) /
+  (avg_youngforest | sd_youngforest | total_youngforest) /
+  (avg_oldforest | sd_oldforest | total_oldforest) +
+  plot_layout(heights = c(1, 1, 1.2)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
+
+ggsave(paste0(fig_dir, "/figureS?_2000_2010_SOCchange.png"), 
+       plot = p_2000_2010, bg = "white", dpi = 600, width = 200 / 25.4, height = 150 / 25.4, units = "in")
+
+#-----------------Figure Extended Data 3. Est. map and SE 2010-2020 --------------------------
+# legend range for pixel level SOC change per area
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate <- c(summary_youngforest2010$annual_mean,
+                  summary_oldforest2010$annual_mean,
+                  summary_grassland2010$annual_mean)
+SOC_rate_limits <- c(round(quantile(all_SOC_rate, 0.025, na.rm = TRUE), 1),
+                     round(quantile(all_SOC_rate, 0.975, na.rm = TRUE), 1) )
+
+# legend range for SE of pixel level SOC change 
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate_se <- c(summary_youngforest2010$annual_sd,
+                     summary_oldforest2010$annual_sd,
+                     summary_grassland2010$annual_sd)
+SOC_se_limits <- c(round(quantile(all_SOC_rate_se, 0.025, na.rm = TRUE), 1),
+                   round(quantile(all_SOC_rate_se, 0.975, na.rm = TRUE), 1) )
+
+# legend range for pixel-level total SOC stock change
+# squish tails <2.5% and >97.5% to same color
+all_SOC_total_change <- c(summary_youngforest2010$annual_mean_GgperPixel,
+                          summary_oldforest2010$annual_mean_GgperPixel,
+                          summary_grassland2010$annual_mean_GgperPixel)
+total_change_limits <- c(round(quantile(all_SOC_total_change, 0.025, na.rm = TRUE), 1),
+                         round(quantile(all_SOC_total_change, 0.975, na.rm = TRUE), 1) )
+
+# plot pixel level SOC rates
+avg_grassland <- plot_change_value(summary_grassland2010, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="grassland 2010-2020", include_legend=F,legend_name=NULL)
+
+avg_youngforest <- plot_change_value(summary_youngforest2010, "annual_mean",
+                                     legend_range = SOC_rate_limits, panel_letter="",
+                                     panel_title="young forest 2010-2020", include_legend=F,legend_name=NULL)
+
+avg_oldforest <- plot_change_value(summary_oldforest2010, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="old forest 2010-2020", include_legend=T,legend_name="mean SOC rate (Mg C/ha yr-1)")
+
+# plot standard error
+sd_grassland <- plot_single_value_scico(summary_grassland2010, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="grassland 2010-2020", include_legend=F, legend_name=NULL)
+
+sd_youngforest <- plot_single_value_scico(summary_youngforest2010, var_name="annual_sd", 
+                                          legend_range = SOC_se_limits,
+                                          panel_title="young forest 2010-2020", include_legend=F, legend_name=NULL)
+
+sd_oldforest <- plot_single_value_scico(summary_oldforest2010, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="old forest 2010-2020", include_legend=T, legend_name="standard error (Mg C/ha yr-1)")
+
+# plot aggregated total pixel SOC change 
+total_grassland <- plot_change_value(summary_grassland2010, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="grassland 2010-2020", include_legend=F,legend_name=NULL)
+
+total_youngforest <- plot_change_value(summary_youngforest2010, "annual_mean_GgperPixel",
+                                       legend_range = total_change_limits, panel_letter="",
+                                       panel_title="young forest 2010-2020", include_legend=F,legend_name=NULL)
+
+total_oldforest <- plot_change_value(summary_oldforest2010, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="old forest 2010-2020", include_legend=T,legend_name="total SOC change per 0.5° pixel (Gg C yr-1)")
+
+# Combine 9 panels in 3 columns x 3 rows layout
+p_2010_2020 <- 
+  (avg_grassland | sd_grassland | total_grassland) /
+  (avg_youngforest | sd_youngforest | total_youngforest) /
+  (avg_oldforest | sd_oldforest | total_oldforest) +
+  plot_layout(heights = c(1, 1, 1.2)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
+
+ggsave(paste0(fig_dir, "/figureS?_2010_2020_SOCchange.png"), 
+       plot = p_2010_2020, bg = "white", dpi = 600, width = 200 / 25.4, height = 150 / 25.4, units = "in")
+
+#-----------------Figure Extended Data 4. Est. map and SE 1992-2020 --------------------------
+# legend range for pixel level SOC change per area
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate <- c(summary_youngforest1992_2020$annual_mean,
+                  summary_oldforest1992_2020$annual_mean,
+                  summary_grassland1992_2020$annual_mean)
+SOC_rate_limits <- c(round(quantile(all_SOC_rate, 0.025, na.rm = TRUE), 1),
+                     round(quantile(all_SOC_rate, 0.975, na.rm = TRUE), 1) )
+
+# legend range for SE of pixel level SOC change 
+# squish tails <2.5% and >97.5% to same color
+all_SOC_rate_se <- c(summary_youngforest1992_2020$annual_sd,
+                     summary_oldforest1992_2020$annual_sd,
+                     summary_grassland1992_2020$annual_sd)
+SOC_se_limits <- c(round(quantile(all_SOC_rate_se, 0.025, na.rm = TRUE), 1),
+                   round(quantile(all_SOC_rate_se, 0.975, na.rm = TRUE), 1) )
+
+# legend range for pixel-level total SOC stock change
+# squish tails <2.5% and >97.5% to same color
+all_SOC_total_change <- c(summary_youngforest1992_2020$annual_mean_GgperPixel,
+                          summary_oldforest1992_2020$annual_mean_GgperPixel,
+                          summary_grassland1992_2020$annual_mean_GgperPixel)
+total_change_limits <- c(round(quantile(all_SOC_total_change, 0.025, na.rm = TRUE), 1),
+                         round(quantile(all_SOC_total_change, 0.975, na.rm = TRUE), 1) )
+
+# plot pixel level SOC rates
+avg_grassland <- plot_change_value(summary_grassland1992_2020, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="grassland 1992-2020", include_legend=F,legend_name=NULL)
+
+avg_youngforest <- plot_change_value(summary_youngforest1992_2020, "annual_mean",
+                                     legend_range = SOC_rate_limits, panel_letter="",
+                                     panel_title="young forest 1992-2020", include_legend=F,legend_name=NULL)
+
+avg_oldforest <- plot_change_value(summary_oldforest1992_2020, "annual_mean",
+                                   legend_range = SOC_rate_limits, panel_letter="",
+                                   panel_title="old forest 1992-2020", include_legend=T,legend_name="mean SOC rate (Mg C/ha yr-1)")
+
+# plot standard error
+sd_grassland <- plot_single_value_scico(summary_grassland1992_2020, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="grassland 1992-2020", include_legend=F, legend_name=NULL)
+
+sd_youngforest <- plot_single_value_scico(summary_youngforest1992_2020, var_name="annual_sd", 
+                                          legend_range = SOC_se_limits,
+                                          panel_title="young forest 1992-2020", include_legend=F, legend_name=NULL)
+
+sd_oldforest <- plot_single_value_scico(summary_oldforest1992_2020, var_name="annual_sd", 
+                                        legend_range = SOC_se_limits,  
+                                        panel_title="old forest 1992-2020", include_legend=T, legend_name="standard error (Mg C/ha yr-1)")
+
+# plot aggregated total pixel SOC change 
+total_grassland <- plot_change_value(summary_grassland1992_2020, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="grassland 1992-2020", include_legend=F,legend_name=NULL)
+
+total_youngforest <- plot_change_value(summary_youngforest1992_2020, "annual_mean_GgperPixel",
+                                       legend_range = total_change_limits, panel_letter="",
+                                       panel_title="young forest 1992-2020", include_legend=F,legend_name=NULL)
+
+total_oldforest <- plot_change_value(summary_oldforest1992_2020, "annual_mean_GgperPixel",
+                                     legend_range = total_change_limits, panel_letter="",
+                                     panel_title="old forest 1992-2020", include_legend=T,legend_name="total SOC change per 0.5° pixel (Gg C yr-1)")
+
+# Combine 9 panels in 3 columns x 3 rows layout
+p_1992_2020 <- 
+  (avg_grassland | sd_grassland | total_grassland) /
+  (avg_youngforest | sd_youngforest | total_youngforest) /
+  (avg_oldforest | sd_oldforest | total_oldforest) +
+  plot_layout(heights = c(1, 1, 1.2)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
+
+ggsave(paste0(fig_dir, "/figureS?_1992_2020_SOCchange.png"), 
+       plot = p_1992_2020, bg = "white", dpi = 600, width = 200 / 25.4, height = 150 / 25.4, units = "in")
+
+#-----------------Figure Extended Data 5. Significant pixels -------------------------------
+# filter delta dataframes for significant pixels
+#1990-2000
+summary_youngforest1990_sig <- summary_youngforest1990 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_oldforest1990_sig <- summary_oldforest1990 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_grassland1990_sig <- summary_grassland1990 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+# 2000-2010
+summary_youngforest2000_sig <- summary_youngforest2000 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_oldforest2000_sig <- summary_oldforest2000 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_grassland2000_sig <- summary_grassland2000 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+# 2010-2020
+summary_youngforest2010_sig <- summary_youngforest2010 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_oldforest2010_sig <- summary_oldforest2010 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_grassland2010_sig <- summary_grassland2010 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+# 1992-2020
+summary_youngforest1992_2020_sig <- summary_youngforest1992_2020 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_oldforest1992_2020_sig <- summary_oldforest1992_2020 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+summary_grassland1992_2020_sig <- summary_grassland1992_2020 %>%
+  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
+
+# legend range for pixel level SOC change per area
+# squish tails <2.5% and >97.5% to same color
+# grassland limits
+sig_SOC_rate_g <- c(summary_grassland1990_sig$annual_mean,
+                    summary_grassland2000_sig$annual_mean,
+                    summary_grassland2010_sig$annual_mean,
+                    summary_grassland1992_2020_sig$annual_mean)
+sig_SOC_rate_g_limits <- c(round(quantile(sig_SOC_rate_g, 0.025, na.rm = TRUE), 1),
+                           round(quantile(sig_SOC_rate_g, 0.975, na.rm = TRUE), 1) )
+
+# young forest limits
+sig_SOC_rate_yf <- c(summary_youngforest1990_sig$annual_mean,
+                     summary_youngforest2000_sig$annual_mean,
+                     summary_youngforest2010_sig$annual_mean,
+                     summary_youngforest1992_2020_sig$annual_mean)
+sig_SOC_rate_yf_limits <- c(round(quantile(sig_SOC_rate_yf, 0.025, na.rm = TRUE), 1),
+                            round(quantile(sig_SOC_rate_yf, 0.975, na.rm = TRUE), 1) )
+
+# old forest limits
+sig_SOC_rate_of <- c(summary_oldforest1990_sig$annual_mean,
+                     summary_oldforest2000_sig$annual_mean,
+                     summary_oldforest2010_sig$annual_mean,
+                     summary_oldforest1992_2020_sig$annual_mean)
+sig_SOC_rate_of_limits <- c(round(quantile(sig_SOC_rate_of, 0.025, na.rm = TRUE), 1),
+                            round(quantile(sig_SOC_rate_of, 0.975, na.rm = TRUE), 1) )
+
+# plot grassland
+sig_grassland1990 <- plot_change_value(summary_grassland1990_sig, "annual_mean",
+                                       legend_range = sig_SOC_rate_g_limits, panel_letter="",
+                                       panel_title="grassland 1992-2000", include_legend=F,legend_name=NULL)
+
+sig_grassland2000 <- plot_change_value(summary_grassland2000_sig, "annual_mean",
+                                       legend_range = sig_SOC_rate_g_limits, panel_letter="",
+                                       panel_title="grassland 2000-2010", include_legend=F,legend_name=NULL)
+
+sig_grassland2010 <- plot_change_value(summary_grassland2010_sig, "annual_mean",
+                                       legend_range = sig_SOC_rate_g_limits, panel_letter="",
+                                       panel_title="grassland 2010-2020", include_legend=F,legend_name=NULL)
+
+sig_grassland1992_2020 <- plot_change_value(summary_grassland1992_2020_sig, "annual_mean",
+                                            legend_range = sig_SOC_rate_g_limits, panel_letter="",
+                                            panel_title="grassland 1992-2020", include_legend=T,legend_name="mean SOC rate (Mg C/ha yr-1)")
+
+# plot young forest
+sig_youngforest1990 <- plot_change_value(summary_youngforest1990_sig, "annual_mean",
+                                         legend_range = sig_SOC_rate_yf_limits, panel_letter="",
+                                         panel_title="young forest 1992-2000", include_legend=F,legend_name=NULL)
+
+sig_youngforest2000 <- plot_change_value(summary_youngforest2000_sig, "annual_mean",
+                                         legend_range = sig_SOC_rate_yf_limits, panel_letter="",
+                                         panel_title="young forest 2000-2010", include_legend=F,legend_name=NULL)
+
+sig_youngforest2010 <- plot_change_value(summary_youngforest2010_sig, "annual_mean",
+                                         legend_range = sig_SOC_rate_yf_limits, panel_letter="",
+                                         panel_title="young forest 2010-2020", include_legend=F,legend_name=NULL)
+
+sig_youngforest1992_2020 <- plot_change_value(summary_youngforest1992_2020_sig, "annual_mean",
+                                              legend_range = sig_SOC_rate_yf_limits, panel_letter="",
+                                              panel_title="young forest 1992-2020", include_legend=T,legend_name="mean SOC rate (Mg C/ha yr-1)")
+
+# plot old forest
+sig_oldforest1990 <- plot_change_value(summary_oldforest1990_sig, "annual_mean",
+                                       legend_range = sig_SOC_rate_of_limits, panel_letter="",
+                                       panel_title="old forest 1992-2000", include_legend=F,legend_name=NULL)
+
+sig_oldforest2000 <- plot_change_value(summary_oldforest2000_sig, "annual_mean",
+                                       legend_range = sig_SOC_rate_of_limits, panel_letter="",
+                                       panel_title="old forest 2000-2010", include_legend=F,legend_name=NULL)
+
+sig_oldforest2010 <- plot_change_value(summary_oldforest2010_sig, "annual_mean",
+                                       legend_range = sig_SOC_rate_of_limits, panel_letter="",
+                                       panel_title="old forest 2010-2020", include_legend=F,legend_name=NULL)
+
+sig_oldforest1992_2020 <- plot_change_value(summary_oldforest1992_2020_sig, "annual_mean",
+                                            legend_range = sig_SOC_rate_of_limits, panel_letter="",
+                                            panel_title="old forest 1992-2020", include_legend=T,legend_name="mean SOC rate (Mg C/ha yr-1)")
 
 
-# # data against whittaker plot (without rate)
-# p_whittaker <- whittaker_base_plot() + 
-#   new_scale_fill() +
-#   facet_wrap(~forest_cond_gf_besnard60,
-#              nrow = 1, 
-#              labeller = labeller(
-#                forest_cond_gf_besnard60 = 
-#                  c("young forest"="Young forest",
-#                    "old forest"="Old forest",
-#                    "grassland"="Grassland")) ) +
-#   geom_point(data=df_onetime, 
-#              aes(x=mean_mat_site,y=mean_map_site/10,
-#                  color=forest_cond_gf_besnard60, fill=forest_cond_gf_besnard60, shape=data_type), 
-#              size=1, alpha=1, stroke=0.1) +
-#   scale_shape_manual(values = shape_palette, guide="none") +
-#   scale_color_manual(values = type_palette_light, guide="none") +
-#   scale_fill_manual(values = type_palette_light, guide="none") +
-#   new_scale_fill() +
-#   geom_point(data=df_std_ts, 
-#              aes(x=mean_mat_site,y=mean_map_site/10, 
-#                  fill = forest_cond_gf_besnard60, shape=data_type), 
-#              color="black", alpha=1, size=1, stroke = 0.1) +
-#   scale_fill_manual(values = type_palette, guide="none") +
-#   labs(tag="b") +
-#   theme_bw() + 
-#   theme(lgend.position="right")
-# 
-# p_whittaker
+# Combine 9 panels in 3 columns x 4 rows layout
+p_sig <-
+  (sig_grassland1990  | sig_youngforest1990  | sig_oldforest1990 ) /
+  (sig_grassland2000  | sig_youngforest2000  | sig_oldforest2000 ) /
+  (sig_grassland2010  | sig_youngforest2010  | sig_oldforest2010 ) /
+  (sig_grassland1992_2020  | sig_youngforest1992_2020  | sig_oldforest1992_2020 ) +
+  plot_layout(heights = c(1, 1, 1, 1.2)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
 
-#-----------------Figure S3 heatmaps of MAT, MAP, year -------------------------
+ggsave(paste0(fig_dir, "/figureS?_sig_SOCchange.png"), plot = p_sig, bg = "white", dpi = 600, 
+       width = 200 / 25.4, height = 180 / 25.4, units = "in")
 
-# generate 3D dataframe based on MAT, MAP
-heatmap_MAT_pred <- function(gmod, df, cond_str="young forest", yr_span=c(1957,2020), MAT_span=c(-30,30)) {
-  
-  df_cond <- df %>% filter(forest_cond_gf_besnard60 == cond_str)
-  
-  MAT_ngrid <- MAT_span[2] - MAT_span[1] + 1
-  yr_ngrid <- yr_span[2] - yr_span[1] + 1
-  cond_name <- case_when(cond_str=="young forest" ~ "young.forest",
-                         cond_str=="old forest" ~ "old.forest", 
-                         cond_str=="grassland" ~ "grassland",
-                         cond_str=="shrubland" ~ "shrubland")
-  
-  # construct grid manually 
-  mod_pred_of_mat <- data.frame(
-    year = rep(seq(yr_span[1], yr_span[2], 1), MAT_ngrid),
-    MAT_cru = rep(MAT_span[1]:MAT_span[2], each = yr_ngrid),
-    MAP_cru = mean(df_cond$MAP_cru),
-    forest_cond_gf_besnard60 = cond_str,
-    std_clay_plo = 0,
-    std_n_pct_plo = 0,
-    std_ph_plo = 0,
-    siteID = 0,
-    plotID = 0
-  ) %>% 
-    mutate(std_MAT_cru = (MAT_cru - mean(df$MAT_cru)) / sd(df$MAT_cru),
-           std_MAP_cru = (MAP_cru - mean(df$MAP_cru)) / sd(df$MAP_cru),
-           std_year = (year - mean(df$observation_year)) / sd(df$observation_year)
-    )
-  
-  pred <- posterior_epred(gmod, newdata = mod_pred_of_mat, re_formula = NA)
-  pred_summary <- data.frame(
-    fit_mean = apply(pred, 2, mean),
-    fit_sd = apply(pred, 2, sd),
-    fit_2.5 = apply(pred, 2, quantile, probs = 0.025),
-    fit_97.5 = apply(pred, 2, quantile, probs = 0.975)
-  ) %>%
-    mutate(
-      exp_fit_mean = exp(fit_mean),
-      exp_fit_sd = exp(fit_sd),
-      exp_fit_2.5 = exp(fit_2.5),
-      exp_fit_97.5 = exp(fit_97.5)
-    )
-  
-  mod_pred_of_mat <- cbind(mod_pred_of_mat, pred_summary)
-  
-  # plot
-  plot <- ggplot(mod_pred_of_mat) + 
-    geom_raster(aes(year, MAT_cru, fill =exp_fit_mean)) +
-    scale_fill_viridis_c(option = "viridis") +
-    geom_point(data=df_std[df_std$forest_cond_gf_besnard60==cond_str,],
-               aes(x=observation_year, y=MAT_cru), size=0.05,alpha=0.2,color="white") + 
-    xlim(yr_span) +  ylim(MAT_span) +
-    labs(fill="SOC (Mg/ha)", x=NULL, y="MAT (°C)") +
-    theme(#panel.grid.major = element_blank(), 
-      #panel.grid.minor = element_blank(),
-      legend.margin = margin(t= -2, l=-2, r=-2, unit = "pt"),
-      legend.title = element_text(size = 10),
-      axis.title.y = element_text(size = 10),
-      title = element_text(size = 10))
-  
-  return(plot)
-}
-heatmap_MAP_pred <- function(gmod, df, cond_str="young forest", yr_span=c(1957,2020), MAP_span=c(0,6000)) {
-  
-  df_cond <- df %>% filter(forest_cond_gf_besnard60 == cond_str)
-  
-  MAP_ngrid <- (MAP_span[2] - MAP_span[1])/100 + 1
-  yr_ngrid <- yr_span[2] - yr_span[1] + 1
-  cond_name <- case_when(cond_str=="young forest" ~ "young.forest",
-                         cond_str=="old forest" ~ "old.forest", 
-                         cond_str=="grassland" ~ "grassland",
-                         cond_str=="shrubland" ~ "shrubland")
-  
-  mod_pred_of_mat <- data.frame(
-    year = rep(seq(yr_span[1], yr_span[2], 1), MAP_ngrid),
-    MAT_cru = mean(df_cond$MAT_cru),
-    MAP_cru = rep(seq(MAP_span[1], MAP_span[2], by = 100), each = yr_ngrid),
-    forest_cond_gf_besnard60 = cond_str,
-    std_clay_plo = 0,
-    std_n_pct_plo = 0,
-    std_ph_plo = 0,
-    siteID = 0,
-    plotID = 0
-  ) %>% 
-    mutate(std_MAT_cru = (MAT_cru - mean(df$MAT_cru)) / sd(df$MAT_cru),
-           std_MAP_cru = (MAP_cru - mean(df$MAP_cru)) / sd(df$MAP_cru),
-           std_year = (year - mean(df$observation_year)) / sd(df$observation_year)
-    )
-  
-  pred <- posterior_epred(gmod, newdata = mod_pred_of_mat, re_formula = NA)
-  
-  pred_summary <- data.frame(
-    fit_mean = apply(pred, 2, mean),
-    fit_sd = apply(pred, 2, sd),
-    fit_2.5 = apply(pred, 2, quantile, probs = 0.025),
-    fit_97.5 = apply(pred, 2, quantile, probs = 0.975)
-  ) %>%
-    mutate(
-      exp_fit_mean = exp(fit_mean),
-      exp_fit_sd = exp(fit_sd),
-      exp_fit_2.5 = exp(fit_2.5),
-      exp_fit_97.5 = exp(fit_97.5)
-    )
-  
-  mod_pred_of_mat <- cbind(mod_pred_of_mat, pred_summary)
-  
-  plot <- ggplot(mod_pred_of_mat) + 
-    geom_raster(aes(year, MAP_cru, fill = exp_fit_mean)) +
-    scale_fill_viridis_c(option = "viridis") +
-    geom_point(data=df_std[df_std$forest_cond_gf_besnard60==cond_str,],
-               aes(x=observation_year, y=MAP_cru), size=0.05,alpha=0.2, color="white") + 
-    xlim(yr_span) + ylim(MAP_span) +
-    labs(fill= "SOC (Mg/ha)", x=NULL, y="MAP (mm)") +
-    theme(#panel.grid.major = element_blank(), 
-      #panel.grid.minor = element_blank(),
-      legend.margin = margin(t= -2, l=-2, r=-2, unit = "pt"),
-      legend.title = element_text(size = 10),
-      axis.title.y = element_text(size = 10),
-      title = element_text(size = 10))
-  
-  return(plot)
-}
+#-----------------Figure Extended Data 6. sink change 1990s to 2000s ------------------------
+# set limit to legend of sink changes for this figure (1990s vs. 2000s) and the next (2000s vs. 2010s)
+all_differences <- c(
+  abs(summary_diff_grassland_1990s_2000s$diff_mean),
+  abs(summary_diff_youngforest_1990s_2000s$diff_mean),
+  abs(summary_diff_oldforest_1990s_2000s$diff_mean),
+  abs(summary_diff_grassland_2000s_2010s$diff_mean),
+  abs(summary_diff_youngforest_2000s_2010s$diff_mean),
+  abs(summary_diff_oldforest_2000s_2010s$diff_mean)
+)
+magnitude_limit <- round(quantile(all_differences, 0.96, na.rm = TRUE), 1)
+print(paste("Magnitude limit (96th percentile):", magnitude_limit))
 
-# apply functions to gmod
-plot_yf_MAT_pred <- heatmap_MAT_pred(mod, df_std, cond_str="young forest",
-                                     yr_span=c(1992,2020), MAT_span=c(minMAT_yf,maxMAT_yf)) + ggtitle("Young Forest")
-plot_of_MAT_pred <- heatmap_MAT_pred(mod, df_std, cond_str="old forest",
-                                     yr_span=c(1992,2020), MAT_span=c(minMAT_of,maxMAT_of)) + ggtitle("Old Forest")
-plot_g_MAT_pred <- heatmap_MAT_pred(mod, df_std, cond_str="grassland",
-                                    yr_span=c(1992,2020), MAT_span=c(minMAT_g,maxMAT_g)) + ggtitle("Grassland")
+# plot magnitude 1990 vs 2000
+diff_g_1990v2000 <- plot_sink_change_magnitude(df_name = "summary_diff_grassland_1990s_2000s",
+                                               panel_letter = "a",
+                                               decade_lab_str = "2000s minus 1990s",
+                                               include_legend = FALSE)
+diff_yf_1990v2000 <- plot_sink_change_magnitude(df_name = "summary_diff_youngforest_1990s_2000s",
+                                                panel_letter = "b",
+                                                decade_lab_str = "2000s minus 1990s",
+                                                include_legend = FALSE)
+diff_of_1990v2000 <- plot_sink_change_magnitude(df_name = "summary_diff_oldforest_1990s_2000s",
+                                                panel_letter = "c",
+                                                decade_lab_str = "2000s minus 1990s",
+                                                include_legend = TRUE)
 
-plot_yf_MAP_pred <- heatmap_MAP_pred(mod, df_std, cond_str="young forest",
-                                     yr_span=c(1992,2020), MAP_span=c(minMAP_yf,maxMAP_yf)) + ggtitle("Young Forest")
-plot_of_MAP_pred <- heatmap_MAP_pred(mod, df_std, cond_str="old forest",
-                                     yr_span=c(1992,2020), MAP_span=c(minMAP_yf,maxMAP_yf)) + ggtitle("Old Forest")
-plot_g_MAP_pred <- heatmap_MAP_pred(mod, df_std, cond_str="grassland",
-                                    yr_span=c(1992,2020), MAP_span=c(minMAP_g,maxMAP_g)) + ggtitle("Grassland")
+# plot probability, 1990v2000
+diff_g_1990v2000_prob <- plot_sink_change_probability(df_name = "summary_diff_grassland_1990s_2000s",
+                                                      panel_letter = "d",
+                                                      include_legend = FALSE)
+diff_yf_1990v2000_prob <- plot_sink_change_probability(df_name = "summary_diff_youngforest_1990s_2000s",
+                                                       panel_letter = "e",
+                                                       include_legend = FALSE)
+diff_of_1990v2000_prob <- plot_sink_change_probability(df_name = "summary_diff_oldforest_1990s_2000s",
+                                                       panel_letter = "f",
+                                                       include_legend = TRUE)
 
-# assemble
-p_heatmap <- grid.arrange(plot_yf_MAT_pred,plot_yf_MAP_pred,
-                          plot_of_MAT_pred,plot_of_MAP_pred,
-                          plot_g_MAT_pred,plot_g_MAP_pred,
-                          ncol=2)
+# if 
+# Combine 6 panels in 2 columns x 3 rows layout
+combined_figure <- (diff_g_1990v2000 | diff_g_1990v2000_prob) /
+  (diff_yf_1990v2000 | diff_yf_1990v2000_prob) /
+  (diff_of_1990v2000 | diff_of_1990v2000_prob) +
+  plot_layout(heights = c(1, 1, 1.2)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
 
-# save
-ggsave(paste0(fig_dir, "/figuresS?_heatmap.png"),# "./figureS3_heatmap.png", 
-       plot = p_heatmap, bg = "white", dpi = 600, width = 183 / 25.4, height = 183 / 25.4, units = "in")
+# Save as full page PNG (Letter: 8.5 x 11 inches)
+ggsave(paste0(fig_dir, "/FigureS?_sink_change_magnitude_probability_1990s_vs_2000s.png"),
+       plot = combined_figure,
+       width = 8.5, height = 8, dpi = 300, bg = "white")
 
+#-----------------Figure Extended Data 7. sink change 2000s to 2010s ------------------------
+# plot magnitude 2000s vs 2010s
+diff_g_2000v2010 <- plot_sink_change_magnitude(df_name = "summary_diff_grassland_2000s_2010s",
+                                               panel_letter = "a",
+                                               decade_lab_str = "2010s minus 2000s",
+                                               include_legend = FALSE)
+diff_yf_2000v2010 <- plot_sink_change_magnitude(df_name = "summary_diff_youngforest_2000s_2010s",
+                                                panel_letter = "b",
+                                                decade_lab_str = "2010s minus 2000s",
+                                                include_legend = FALSE)
+diff_of_2000v2010 <- plot_sink_change_magnitude(df_name = "summary_diff_oldforest_2000s_2010s",
+                                                panel_letter = "c",
+                                                decade_lab_str = "2010s minus 2000s",
+                                                include_legend = TRUE)
 
-#-----------------Figure S4 extrapolation extent ------------------------------
+# plot probability, 1990v2000
+diff_g_2000v2010_prob <- plot_sink_change_probability(df_name = "summary_diff_grassland_2000s_2010s",
+                                                      panel_letter = "d",
+                                                      
+                                                      include_legend = FALSE)
+diff_yf_2000v2010_prob <- plot_sink_change_probability(df_name = "summary_diff_youngforest_2000s_2010s",
+                                                       panel_letter = "e",
+                                                       include_legend = FALSE)
+diff_of_2000v2010_prob <- plot_sink_change_probability(df_name = "summary_diff_oldforest_2000s_2010s",
+                                                       panel_letter = "f",
+                                                       include_legend = TRUE)
+
+# if 
+# Combine 6 panels in 2 columns x 3 rows layout
+combined_figure <- (diff_g_2000v2010 | diff_g_2000v2010_prob) /
+  (diff_yf_2000v2010 | diff_yf_2000v2010_prob) /
+  (diff_of_2000v2010 | diff_of_2000v2010_prob) +
+  plot_layout(heights = c(1, 1, 1.2)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
+
+# Save as full page PNG (Letter: 8.5 x 11 inches)
+ggsave(paste0(fig_dir, "/FigureS?_sink_change_magnitude_probability_2000s_vs_2010s.png"),
+       plot = combined_figure,
+       width = 8.5, height = 8, dpi = 300, bg = "white")
+
+#-----------------Figure S1 extrapolation extent ------------------------------
 
 # alpha for variable that needs extrapolation:
 alpha_extrapolation <- 0.3
@@ -674,7 +1211,9 @@ plot_extrapolation_variable <- function(input_df,type_str="young forest") {
   )
   
   plot <- ggplot(countries_sf) +
-    geom_sf(fill = "gray100", col="gray", alpha=0.5) +
+    # region boundaries
+    geom_sf(data = region_boundaries,
+            fill = NA, colour = "grey60", linewidth = 0.2) +
     geom_tile(data=extrapolate_df, aes(x=x,y=y,fill=extrapolation_type), alpha=alpha_extrapolation) +
     scale_fill_manual(values = extrapolation_variable_palette, 
                       breaks = c("MAT", "MAP", "soil N", "soil clay", "soil pH"),
@@ -711,154 +1250,105 @@ plot_extrapolation_variable <- function(input_df,type_str="young forest") {
   return(plot)
 }
 
-extrapolation_variable_yf <- plot_extrapolation_variable(input_youngforest_all,"young forest")+ggtitle("Young forest")
-extrapolation_variable_of <- plot_extrapolation_variable(input_oldforest_all,"old forest")+ggtitle("Old forest")
-extrapolation_variable_g <- plot_extrapolation_variable(input_grassland_all,"grassland")+ggtitle("Grassland")
+# build rasters of all pixels in a dataframe in robinson projection
+build_mask <- function(predicted_df) {
+  # make raster with value 1=predicted
+  r <- raster_template; r[cellFromXY(r, as.matrix(predicted_df[, c("x","y")]))] <- 1
+  # transform to robinson projection
+  suppressWarnings(st_transform(st_as_sf(as.polygons(r, dissolve = TRUE)), robinson_projection))
+}
+
+# plot with explicit which variable is out of range
+plot_extrapolation_variable <- function(input_df,type_str="young forest",
+                                        panel_letter="", panel_title="") {
+  
+  # pixels within domain (predicted)
+  predicted_mask <- build_mask(filter(input_df, extrapolation_fraction==0))
+  
+  # pixels that require extrapolation (excluded)
+  extrapolate_combined <- rbind(
+    build_mask(filter(input_df, MAT_extrapolation)) %>% mutate(extrapolation_type = "MAT"),
+    build_mask(filter(input_df, MAP_extrapolation)) %>% mutate(extrapolation_type = "MAP"),
+    build_mask(filter(input_df, n_extrapolation)) %>% mutate(extrapolation_type = "soil N"),
+    build_mask(filter(input_df, clay_extrapolation)) %>% mutate(extrapolation_type = "soil clay"),
+    build_mask(filter(input_df, ph_extrapolation)) %>% mutate(extrapolation_type = "soil pH")
+  )
+  
+  # plot
+  plot <- ggplot(countries_sf) +
+    # region boundaries
+    geom_sf(data = region_boundaries,
+            fill = NA, colour = "grey60", linewidth = 0.2) +
+    # pixels that requires extrapolation (excluded from estimates)
+    geom_sf(data = extrapolate_combined, aes(fill = extrapolation_type), 
+            color = NA, alpha = alpha_extrapolation) +
+    scale_fill_manual(values = extrapolation_variable_palette, 
+                      breaks = c("MAT", "MAP", "soil N", "soil clay", "soil pH"),
+                      name = "Excluded pixels due to \nout-of-range predictor(s)",) +
+    new_scale_fill() +
+    # predicted pixels within domain
+    geom_sf(data = predicted_mask, aes(fill = type_str), color = NA,) +
+    scale_fill_manual(values = type_palette, 
+                      labels = type_str,
+                      name = "Predicted pixels") +
+    guides(fill = guide_legend(order = 1),
+           `fill_newscale` = guide_legend(order = 2)) +
+    labs(x=NULL, y=NULL) + 
+    # Coordinate system for Robinson projection
+    coord_sf(crs = robinson_projection, expand = FALSE,
+             ylim = c(-6e6, 9.6e6)) +
+    # panel label (left top)
+    annotate("text", x = -1.6e7, y = 9.0e6, label = panel_letter, 
+             hjust = 0, size = 4.5, color = "grey15", fontface = "bold") +
+    # land cover label (left top, below panel letter)
+    annotate("text",  x = -1.5e7, y = 9.0e6, label = panel_title,
+             hjust = 0, size = 3.2, color = "grey30", fontface = "plain") +
+    # Theme
+    theme_void(base_size = 9) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA, linewidth = 0.3),
+      legend.position = "right",
+      legend.title = element_text(size = 8.6, color = "grey30"),
+      legend.text = element_text(size = 8, color = "grey30"),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_blank(),  # Remove x-axis title
+      axis.title.y = element_blank(),  # Remove y-axis title
+      axis.text.x = element_blank(),    # Remove x-axis text
+      axis.text.y = element_blank(),    # Remove y-axis text
+      axis.ticks.x = element_blank(),   # Remove x-axis ticks
+      axis.ticks.y = element_blank(),  # Remove y-axis ticks
+    )
+  
+  return(plot)
+}
+
+extrapolation_variable_g <- plot_extrapolation_variable(input_grassland_all,"grassland", panel_title="grassland")
+extrapolation_variable_yf <- plot_extrapolation_variable(input_youngforest_all,"young forest", panel_title="young forest")
+extrapolation_variable_of <- plot_extrapolation_variable(input_oldforest_all,"old forest", panel_title="old forest")
 
 prediction_extent <- grid.arrange(
+  extrapolation_variable_g,
   extrapolation_variable_yf,
   extrapolation_variable_of,
-  extrapolation_variable_g,
   ncol=1)
+
+# combine 3 panels
+prediction_extent <- 
+  extrapolation_variable_g /
+  extrapolation_variable_yf /
+  extrapolation_variable_of +
+  plot_layout(heights = c(1, 1, 1)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
+
 
 # save
 ggsave(paste0(fig_dir, "/figureS?_prediction_extent.png"), 
        plot = prediction_extent, 
        bg = "white", dpi = 600, width = 183 / 25.4, height = 210 / 25.4, units = "in")
 
-#-----------------Figure S5a representativeness by PCA -----------------------------------
-# label pixels that are predicted
-
-predicted_youngforest <- summary_youngforest1992_2020 %>% mutate(yf_predicted=T) %>% dplyr::select(x,y,yf_predicted)
-predicted_oldforest <- summary_oldforest1992_2020 %>% mutate(of_predicted=T) %>% dplyr::select(x,y,of_predicted)
-predicted_grassland <- summary_grassland1992_2020 %>% mutate(g_predicted=T) %>% dplyr::select(x,y,g_predicted)
-
-predicted_pixels <- predicted_youngforest %>%
-  full_join(predicted_oldforest, by = c("x", "y")) %>%
-  full_join(predicted_grassland, by = c("x", "y"))
-
-# predictor space of all predicted 
-input_first <- input_youngforest1990_first %>%
-  left_join(proportion_decade_df, by = c("x", "y")) %>%
-  left_join(predicted_pixels, by = c("x", "y")) %>%
-  mutate(across(c(yf_predicted, of_predicted, g_predicted),
-                ~replace_na(as.logical(.x), FALSE)))
-
-input_last <- input_youngforest2010_last %>%
-  left_join(proportion_decade_df, by = c("x", "y")) %>%
-  left_join(predicted_pixels, by = c("x", "y")) %>%
-  mutate(across(c(yf_predicted, of_predicted, g_predicted),
-                ~replace_na(as.logical(.x), FALSE)))
-
-predictors <- rbind(input_first,input_last) %>%
-  left_join(n_pct_df, by = c("x", "y")) %>% rename(n_pct_plo = value) %>%
-  left_join(clay_df, by = c("x", "y")) %>% rename(clay_plo = value) %>%
-  left_join(ph_df, by = c("x", "y")) %>% rename(ph_plo = value)
-
-# define function that plot all pixels, all data, and time series data in 
-visualize_PCA <- function(predictors, onetime_data, ts_data, 
-                          forest_cond_str="young forest", 
-                          extent_str="avg_youngforest1992_2020",
-                          predict_col = "yf_predicted") {
-  
-  # rename variables for visualization
-  variable_names <- c("observation_year","MAT","MAP","soil_N","soil_clay","soil_pH")
-  
-  # onetime data with this land cover
-  data_values <- onetime_data %>%
-    filter(forest_cond_gf_besnard60==forest_cond_str) %>%
-    dplyr::select(observation_year,MAT_cru,MAP_cru,n_pct_plo,clay_plo,ph_plo)
-  colnames(data_values) <- variable_names
-  
-  # time series data 
-  ts_data_values <- ts_data %>%
-    filter(forest_cond_gf_besnard60==forest_cond_str) %>%
-    dplyr::select(observation_year,MAT_cru,MAP_cru,n_pct_plo,clay_plo,ph_plo)
-  colnames(ts_data_values) <- variable_names
-  
-  # predictors pixels in this land cover
-  # all pixels to predict SOC change of young forest 1992 2020
-  predictors <- predictors %>%
-    dplyr::filter(!!sym(extent_str)>0) %>%
-    dplyr::filter(!!sym(predict_col))
-  
-  predictor_values <- predictors %>%
-    dplyr::select(observation_year,MAT_cru,MAP_cru,n_pct_plo,clay_plo,ph_plo)
-  colnames(predictor_values) <- variable_names
-  
-  # PCA for the predictors (pixels)
-  pca_result <- prcomp(predictor_values, scale. = TRUE)
-  
-  # add PCA score to predictor_values
-  predictor_pca_scores <- cbind(predictors, pca_result$x) %>%
-    mutate(type="Predicted pixels") %>%
-    mutate(type = factor(type, levels = c("Predicted pixels", "Single-time data", "Time series data")))
-  # rename predicted column
-  # colnames(predictor_pca_scores)[which(colnames(predictor_pca_scores)==predict_col)] <- "predict"
-  
-  # project input data to this space
-  # scale data (only run once in this order)
-  data_scaled <- sweep(data_values, 2, pca_result$center, "-")
-  data_scaled <- sweep(data_scaled, 2, pca_result$scale, "/")
-  # project data to PCA space
-  data_pca_scores <- as.matrix(data_scaled) %*% pca_result$rotation
-  data_pca_scores <- as.data.frame(data_pca_scores) %>% 
-    mutate(type="Single-time data") %>%
-    mutate(type = factor(type, levels = c("Predicted pixels", "Single-time data", "Time series data")))
-  
-  # project time series data to this space
-  # scale data (only run once in this order)
-  ts_data_scaled <- sweep(ts_data_values, 2, pca_result$center, "-")
-  ts_data_scaled <- sweep(ts_data_scaled, 2, pca_result$scale, "/")
-  # project data to PCA space
-  ts_data_pca_scores <- as.matrix(ts_data_scaled) %*% pca_result$rotation
-  ts_data_pca_scores <- as.data.frame(ts_data_pca_scores) %>% 
-    mutate(type="Time series data") %>%
-    mutate(type = factor(type, levels = c("Predicted pixels", "Single-time data", "Time series data")))
-  
-  # extract directions of variables on PC1 and PC2 space
-  arrow_scale <- 5
-  variable_directions <- as.data.frame(pca_result$rotation[,1:2]) %>%
-    tibble::rownames_to_column(var = "variable") %>%
-    mutate(PC1 = PC1 * arrow_scale,
-           PC2 = PC2 * arrow_scale)
-  
-  
-  p <- ggplot() + 
-    geom_point(data=predictor_pca_scores, aes(x=PC1, y=PC2, color=type), shape=1,alpha=1) +
-    geom_point(data=data_pca_scores, aes(x=PC1, y=PC2, color=type), shape=1,alpha=1) + 
-    geom_point(data=ts_data_pca_scores, aes(x=PC1, y=PC2, color=type), shape=1,alpha=1) + 
-    scale_color_manual(values=c("Predicted pixels"="gray", "Single-time data"="pink", "Time series data"="skyblue"),
-                       name=NULL) +
-    geom_segment(data = variable_directions,
-                 aes(x = 0, y = 0, xend = PC1, yend = PC2),
-                 arrow = arrow(length = unit(0.2, "cm")),
-                 color = "black") +
-    geom_text(data = variable_directions,
-              aes(x = PC1, y = PC2, label = variable),
-              color = "black", vjust = 1.5, size = 3)
-  
-  
-  return(p)
-}
-
-p_pca_yf <- visualize_PCA(predictors, df_onetime, df_std_ts,"young forest","avg_youngforest1992_2020", "yf_predicted") + 
-  ggtitle("Young forest") + theme(legend.position = "none")
-p_pca_of <- visualize_PCA(predictors, df_onetime, df_std_ts,"old forest","avg_oldforest1992_2020", "of_predicted") + 
-  ggtitle("Old forest") + theme(legend.position = "none")
-p_pca_g <- visualize_PCA(predictors, df_onetime, df_std_ts,"grassland","grassland1992_2020", "g_predicted") + 
-  ggtitle("Grassland") + theme(legend.position = "none")
-pca_legend <- get_legend(
-  visualize_PCA(predictors, df_onetime, df_std_ts, "young forest",
-                "avg_youngforest1992_2020", "yf_predicted") + theme(legend.position = "right"))
-
-pca_plot <- grid.arrange(p_pca_yf,p_pca_of,p_pca_g,pca_legend, ncol=2)
-
-ggsave(paste0(fig_dir, "/figureS?_PCA.png"), 
-       plot = pca_plot, 
-       bg = "white", dpi = 600, width = 183 / 25.4, height = 140 / 25.4, units = "in")
-
-#-----------------Figure S5b distribution of data input variables vs. predicted pixels (cap2_exclude) ---------
+#-----------------Figure S2 distribution of data input variables vs. predicted pixels (cap2_exclude) ---------
 # filter one row for each plot
 df_unique <- df_std %>%
   distinct(siteID, plotID, n_pct_plo, clay_plo, ph_plo, mean_mat_site, mean_map_site)
@@ -881,6 +1371,9 @@ predicted_xy <- rbind(
 ) %>%
   dplyr::select(x,y) %>%
   distinct()
+
+# # save
+# save(predicted_xy, file="./results/predicted_xy.rda")
 
 # # for all pixels that should be predicted
 # predicted_xy <- proportion_decade_df %>%
@@ -912,355 +1405,241 @@ legend <- legendGrob(
 
 p_distribution <- grid.arrange(p_mat,p_map,p_n_pct,p_clay,p_ph,legend, ncol=3)
 
-# ggsave("./figureS11_predictor_distribution.png", plot = p_distribution, 
-#        bg = "white", dpi = 600, width = 183 / 25.4, height = 180 / 25.4, units = "in")
 ggsave(paste0(fig_dir, "/figureS?_predictor_data_distribution.png"), plot = p_distribution, 
        bg = "white", dpi = 600, width = 183 / 25.4, height = 120 / 25.4, units = "in")
 
 
+#-----------------Figure S3 heatmaps of MAT, MAP, year -------------------------
 
-#-----------------Figure S6. Est. map and SE 1992-2000 --------------------------
-# generate panels
-avg_youngforest <- plot_single_delta(summary_youngforest1990[summary_youngforest1990$proportion>0,], "annual_mean")+ggtitle("young forest") # &abs(summary_youngforest1990$annual_mean)<3
-sd_youngforest <- plot_single_value(summary_youngforest1990[summary_youngforest1990$proportion>0,], "annual_sd")+ggtitle(" ")
-total_youngforest <- plot_single_delta(summary_youngforest1990[summary_youngforest1990$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_oldforest <- plot_single_delta(summary_oldforest1990[summary_oldforest1990$proportion>0,], "annual_mean")+ggtitle("old forest")
-sd_oldforest <- plot_single_value(summary_oldforest1990[summary_oldforest1990$proportion>0,], "annual_sd")+ggtitle(" ")
-total_oldforest <- plot_single_delta(summary_oldforest1990[summary_oldforest1990$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_grassland <- plot_single_delta(summary_grassland1990[summary_grassland1990$proportion>0,], "annual_mean")+ggtitle("grassland")
-sd_grassland <-  plot_single_value(summary_grassland1990[summary_grassland1990$proportion>0,], "annual_sd")+ggtitle(" ")
-total_grassland <- plot_single_delta(summary_grassland1990[summary_grassland1990$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-
-gavg_yf <- ggplotGrob(avg_youngforest+ theme(legend.position = "none"))
-gsd_yf  <- ggplotGrob(sd_youngforest+ theme(legend.position = "none"))
-gt_yf <- ggplotGrob(total_youngforest+ theme(legend.position = "none"))
-gavg_of <- ggplotGrob(avg_oldforest+ theme(legend.position = "none"))
-gsd_of  <- ggplotGrob(sd_oldforest + theme(legend.position = "none"))
-gt_of <- ggplotGrob(total_oldforest+ theme(legend.position = "none"))
-gavg_g <- ggplotGrob(avg_grassland+ theme(legend.position = "none"))
-gsd_g  <- ggplotGrob(sd_grassland+ theme(legend.position = "none"))
-gt_g <- ggplotGrob(total_grassland+ theme(legend.position = "none"))
-
-legend_avg_yf <- get_legend(ggplotGrob(avg_youngforest))
-legend_sd_yf  <- get_legend(ggplotGrob(sd_youngforest))
-legend_t_yf <- get_legend(ggplotGrob(total_youngforest))
-legend_avg_of <- get_legend(ggplotGrob(avg_oldforest))
-legend_sd_of  <- get_legend(ggplotGrob(sd_oldforest))
-legend_t_of <- get_legend(ggplotGrob(total_oldforest))
-legend_avg_g <- get_legend(ggplotGrob(avg_grassland))
-legend_sd_g  <- get_legend(ggplotGrob(sd_grassland))
-legend_t_g <- get_legend(ggplotGrob(total_grassland))
-
-# plot 
-p_1992_2000_cap <-
-  plot_grid(
-    plot_grid(ggpubr::text_grob("Average SOC Change\n(MgC/ha yr-1)"),
-              gavg_yf,gavg_of,gavg_g, ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_avg_yf,legend_avg_of, legend_avg_g,ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    plot_grid(ggpubr::text_grob("Standard Error\n(MgC/ha yr-1)"),
-              gsd_yf,gsd_of,gsd_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_sd_yf,legend_sd_of,legend_sd_g, heights=c(0.1,1,1,1), ncol =1, align="hv"),
-    plot_grid(ggpubr::text_grob("Total SOC change\nper 0.5° pixel (Gg/yr)"),
-              gt_yf,gt_of,gt_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(),
-              legend_t_yf,legend_t_of,legend_t_g, ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    ncol=6, align = "hv",rel_widths = c(7,2.5,7,2.5,7,2.5)
-  )
-
-ggsave("./figures/figureS6_1992_2000_SOCchange.png", 
-       plot = p_1992_2000_cap, bg = "white", dpi = 600, width = 200 / 25.4, height = 180 / 25.4, units = "in")
-
-
-#-----------------Figure S7. Est. map and SE 2000-2010 --------------------------
-
-# generate panels
-avg_youngforest <- plot_single_delta(summary_youngforest2000[summary_youngforest2000$proportion>0,], "annual_mean")+ggtitle("young forest")
-sd_youngforest <- plot_single_value(summary_youngforest2000[summary_youngforest2000$proportion>0,], "annual_sd")+ggtitle(" ")
-total_youngforest <- plot_single_delta(summary_youngforest2000[summary_youngforest2000$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_oldforest <- plot_single_delta(summary_oldforest2000[summary_oldforest2000$proportion>0,], "annual_mean")+ggtitle("old forest")
-sd_oldforest <- plot_single_value(summary_oldforest2000[summary_oldforest2000$proportion>0,], "annual_sd")+ggtitle(" ")
-total_oldforest <- plot_single_delta(summary_oldforest2000[summary_oldforest2000$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_grassland <- plot_single_delta(summary_grassland2000[summary_grassland2000$proportion>0,], "annual_mean")+ggtitle("grassland")
-sd_grassland <-  plot_single_value(summary_grassland2000[summary_grassland2000$proportion>0,], "annual_sd")+ggtitle(" ")
-total_grassland <- plot_single_delta(summary_grassland2000[summary_grassland2000$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-
-gavg_yf <- ggplotGrob(avg_youngforest+ theme(legend.position = "none"))
-gsd_yf  <- ggplotGrob(sd_youngforest+ theme(legend.position = "none"))
-gt_yf <- ggplotGrob(total_youngforest+ theme(legend.position = "none"))
-gavg_of <- ggplotGrob(avg_oldforest+ theme(legend.position = "none"))
-gsd_of  <- ggplotGrob(sd_oldforest + theme(legend.position = "none"))
-gt_of <- ggplotGrob(total_oldforest+ theme(legend.position = "none"))
-gavg_g <- ggplotGrob(avg_grassland+ theme(legend.position = "none"))
-gsd_g  <- ggplotGrob(sd_grassland+ theme(legend.position = "none"))
-gt_g <- ggplotGrob(total_grassland+ theme(legend.position = "none"))
-
-legend_avg_yf <- get_legend(ggplotGrob(avg_youngforest))
-legend_sd_yf  <- get_legend(ggplotGrob(sd_youngforest))
-legend_t_yf <- get_legend(ggplotGrob(total_youngforest))
-legend_avg_of <- get_legend(ggplotGrob(avg_oldforest))
-legend_sd_of  <- get_legend(ggplotGrob(sd_oldforest))
-legend_t_of <- get_legend(ggplotGrob(total_oldforest))
-legend_avg_g <- get_legend(ggplotGrob(avg_grassland))
-legend_sd_g  <- get_legend(ggplotGrob(sd_grassland))
-legend_t_g <- get_legend(ggplotGrob(total_grassland))
-
-# plot 
-p_2000_2010_cap <- 
-  plot_grid(
-    plot_grid(ggpubr::text_grob("Average SOC Change\n(MgC/ha yr-1)"),
-              gavg_yf,gavg_of,gavg_g, ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_avg_yf,legend_avg_of, legend_avg_g,ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    plot_grid(ggpubr::text_grob("Standard Error\n(MgC/ha yr-1)"),
-              gsd_yf,gsd_of,gsd_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_sd_yf,legend_sd_of,legend_sd_g, heights=c(0.1,1,1,1), ncol =1, align="hv"),
-    plot_grid(ggpubr::text_grob("Total SOC change\nper 0.5° pixel (Gg/yr)"),
-              gt_yf,gt_of,gt_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(),
-              legend_t_yf,legend_t_of,legend_t_g, ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    ncol=6, align = "hv",rel_widths = c(7,2.5,7,2.5,7,2.5)
-  )
-
-ggsave("./figures/figureS7_2000_2010_SOCchange.png", plot = p_2000_2010_cap, bg = "white", dpi = 600, width = 200 / 25.4, height = 180 / 25.4, units = "in")
-
-#-----------------Figure S8. Est. map and SE 2010-2020 --------------------------
-
-# generate panels
-avg_youngforest <- plot_single_delta(summary_youngforest2010[summary_youngforest2010$proportion>0,], "annual_mean")+ggtitle("young forest")
-sd_youngforest <- plot_single_value(summary_youngforest2010[summary_youngforest2010$proportion>0,], "annual_sd")+ggtitle(" ")
-total_youngforest <- plot_single_delta(summary_youngforest2010[summary_youngforest2010$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_oldforest <- plot_single_delta(summary_oldforest2010[summary_oldforest2010$proportion>0,], "annual_mean")+ggtitle("old forest")
-sd_oldforest <- plot_single_value(summary_oldforest2010[summary_oldforest2010$proportion>0,], "annual_sd")+ggtitle(" ")
-total_oldforest <- plot_single_delta(summary_oldforest2010[summary_oldforest2010$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_grassland <- plot_single_delta(summary_grassland2010[summary_grassland2010$proportion>0,], "annual_mean")+ggtitle("grassland")
-sd_grassland <-  plot_single_value(summary_grassland2010[summary_grassland2010$proportion>0,], "annual_sd")+ggtitle(" ")
-total_grassland <- plot_single_delta(summary_grassland2010[summary_grassland2010$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-
-
-gavg_yf <- ggplotGrob(avg_youngforest+ theme(legend.position = "none"))
-gsd_yf  <- ggplotGrob(sd_youngforest+ theme(legend.position = "none"))
-gt_yf <- ggplotGrob(total_youngforest+ theme(legend.position = "none"))
-gavg_of <- ggplotGrob(avg_oldforest+ theme(legend.position = "none"))
-gsd_of  <- ggplotGrob(sd_oldforest + theme(legend.position = "none"))
-gt_of <- ggplotGrob(total_oldforest+ theme(legend.position = "none"))
-gavg_g <- ggplotGrob(avg_grassland+ theme(legend.position = "none"))
-gsd_g  <- ggplotGrob(sd_grassland+ theme(legend.position = "none"))
-gt_g <- ggplotGrob(total_grassland+ theme(legend.position = "none"))
-
-legend_avg_yf <- get_legend(ggplotGrob(avg_youngforest))
-legend_sd_yf  <- get_legend(ggplotGrob(sd_youngforest))
-legend_t_yf <- get_legend(ggplotGrob(total_youngforest))
-legend_avg_of <- get_legend(ggplotGrob(avg_oldforest))
-legend_sd_of  <- get_legend(ggplotGrob(sd_oldforest))
-legend_t_of <- get_legend(ggplotGrob(total_oldforest))
-legend_avg_g <- get_legend(ggplotGrob(avg_grassland))
-legend_sd_g  <- get_legend(ggplotGrob(sd_grassland))
-legend_t_g <- get_legend(ggplotGrob(total_grassland))
+# generate 3D dataframe based on MAT, MAP
+heatmap_MAT_pred <- function(gmod, df, cond_str="young forest", yr_span=c(1957,2020), MAT_span=c(-30,30)) {
+  
+  df_cond <- df %>% filter(forest_cond_gf_besnard60 == cond_str)
+  
+  MAT_ngrid <- MAT_span[2] - MAT_span[1] + 1
+  yr_ngrid <- yr_span[2] - yr_span[1] + 1
+  cond_name <- case_when(cond_str=="young forest" ~ "young.forest",
+                         cond_str=="old forest" ~ "old.forest", 
+                         cond_str=="grassland" ~ "grassland",
+                         cond_str=="shrubland" ~ "shrubland")
+  
+  # construct grid manually 
+  mod_pred_of_mat <- data.frame(
+    year = rep(seq(yr_span[1], yr_span[2], 1), MAT_ngrid),
+    MAT_cru = rep(MAT_span[1]:MAT_span[2], each = yr_ngrid),
+    MAP_cru = mean(df_cond$MAP_cru),
+    forest_cond_gf_besnard60 = cond_str,
+    known_grassland_grazing = 0,
+    std_clay_plo = 0,
+    std_n_pct_plo = 0,
+    std_ph_plo = 0,
+    siteID = 0,
+    plotID = 0
+  ) %>% 
+    mutate(std_MAT_cru = (MAT_cru - mean(df$MAT_cru)) / sd(df$MAT_cru),
+           std_MAP_cru = (MAP_cru - mean(df$MAP_cru)) / sd(df$MAP_cru),
+           std_year = (year - mean(df$observation_year)) / sd(df$observation_year)
+    )
+  
+  pred <- posterior_epred(gmod, newdata = mod_pred_of_mat, re_formula = NA)
+  pred_summary <- data.frame(
+    fit_mean = apply(pred, 2, mean),
+    fit_sd = apply(pred, 2, sd),
+    fit_2.5 = apply(pred, 2, quantile, probs = 0.025),
+    fit_97.5 = apply(pred, 2, quantile, probs = 0.975)
+  ) %>%
+    mutate(
+      exp_fit_mean = exp(fit_mean),
+      exp_fit_sd = exp(fit_sd),
+      exp_fit_2.5 = exp(fit_2.5),
+      exp_fit_97.5 = exp(fit_97.5)
+    )
+  
+  mod_pred_of_mat <- cbind(mod_pred_of_mat, pred_summary)
+  
+  # plot
+  plot <- ggplot(mod_pred_of_mat) + 
+    geom_raster(aes(year, MAT_cru, fill =exp_fit_mean)) +
+    scale_fill_viridis_c(option = "viridis") +
+    xlim(yr_span) +  ylim(MAT_span) +
+    labs(fill="SOC (Mg/ha)", x=NULL, y="MAT (°C)") +
+    theme(#panel.grid.major = element_blank(), 
+      #panel.grid.minor = element_blank(),
+      legend.margin = margin(t= -2, l=-2, r=-2, unit = "pt"),
+      legend.title = element_text(size = 10),
+      axis.title.y = element_text(size = 10),
+      title = element_text(size = 10))
+  
+  return(plot)
+}
+heatmap_MAP_pred <- function(gmod, df, cond_str="young forest", yr_span=c(1957,2020), MAP_span=c(0,6000)) {
+  
+  df_cond <- df %>% filter(forest_cond_gf_besnard60 == cond_str)
+  
+  MAP_ngrid <- (MAP_span[2] - MAP_span[1])/100 + 1
+  yr_ngrid <- yr_span[2] - yr_span[1] + 1
+  cond_name <- case_when(cond_str=="young forest" ~ "young.forest",
+                         cond_str=="old forest" ~ "old.forest", 
+                         cond_str=="grassland" ~ "grassland",
+                         cond_str=="shrubland" ~ "shrubland")
+  
+  mod_pred_of_mat <- data.frame(
+    year = rep(seq(yr_span[1], yr_span[2], 1), MAP_ngrid),
+    MAT_cru = mean(df_cond$MAT_cru),
+    MAP_cru = rep(seq(MAP_span[1], MAP_span[2], by = 100), each = yr_ngrid),
+    forest_cond_gf_besnard60 = cond_str,
+    known_grassland_grazing = 0,
+    std_clay_plo = 0,
+    std_n_pct_plo = 0,
+    std_ph_plo = 0,
+    siteID = 0,
+    plotID = 0
+  ) %>% 
+    mutate(std_MAT_cru = (MAT_cru - mean(df$MAT_cru)) / sd(df$MAT_cru),
+           std_MAP_cru = (MAP_cru - mean(df$MAP_cru)) / sd(df$MAP_cru),
+           std_year = (year - mean(df$observation_year)) / sd(df$observation_year)
+    )
+  
+  pred <- posterior_epred(gmod, newdata = mod_pred_of_mat, re_formula = NA)
+  
+  pred_summary <- data.frame(
+    fit_mean = apply(pred, 2, mean),
+    fit_sd = apply(pred, 2, sd),
+    fit_2.5 = apply(pred, 2, quantile, probs = 0.025),
+    fit_97.5 = apply(pred, 2, quantile, probs = 0.975)
+  ) %>%
+    mutate(
+      exp_fit_mean = exp(fit_mean),
+      exp_fit_sd = exp(fit_sd),
+      exp_fit_2.5 = exp(fit_2.5),
+      exp_fit_97.5 = exp(fit_97.5)
+    )
+  
+  mod_pred_of_mat <- cbind(mod_pred_of_mat, pred_summary)
+  
+  plot <- ggplot(mod_pred_of_mat) + 
+    geom_raster(aes(year, MAP_cru, fill = exp_fit_mean)) +
+    scale_fill_viridis_c(option = "viridis") +
+    xlim(yr_span) + ylim(MAP_span) +
+    labs(fill= "SOC (Mg/ha)", x=NULL, y="MAP (mm)") +
+    theme(#panel.grid.major = element_blank(), 
+      #panel.grid.minor = element_blank(),
+      legend.margin = margin(t= -2, l=-2, r=-2, unit = "pt"),
+      legend.title = element_text(size = 10),
+      axis.title.y = element_text(size = 10),
+      title = element_text(size = 10))
+  
+  return(plot)
+}
 
 
-# plot 
-p_2010_2020_cap <-
-  plot_grid(
-    plot_grid(ggpubr::text_grob("Average SOC Change\n(MgC/ha yr-1)"),
-              gavg_yf,gavg_of,gavg_g, ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_avg_yf,legend_avg_of, legend_avg_g,ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    plot_grid(ggpubr::text_grob("Standard Error\n(MgC/ha yr-1)"),
-              gsd_yf,gsd_of,gsd_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_sd_yf,legend_sd_of,legend_sd_g, heights=c(0.1,1,1,1), ncol =1, align="hv"),
-    plot_grid(ggpubr::text_grob("Total SOC change\nper 0.5° pixel (Gg/yr)"),
-              gt_yf,gt_of,gt_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(),
-              legend_t_yf,legend_t_of,legend_t_g, ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    ncol=6, align = "hv",rel_widths = c(7,2.5,7,2.5,7,2.5)
-  )
+# apply functions to gmod
+plot_yf_MAT_pred <- heatmap_MAT_pred(mod, df_std, cond_str="young forest",
+                                     yr_span=c(1992,2020), MAT_span=c(minMAT_yf,maxMAT_yf)) + ggtitle("Young Forest")
+plot_of_MAT_pred <- heatmap_MAT_pred(mod, df_std, cond_str="old forest",
+                                     yr_span=c(1992,2020), MAT_span=c(minMAT_of,maxMAT_of)) + ggtitle("Old Forest")
+plot_g_MAT_pred <- heatmap_MAT_pred(mod, df_std, cond_str="grassland",
+                                    yr_span=c(1992,2020), MAT_span=c(minMAT_g,maxMAT_g)) + ggtitle("Grassland")
 
-ggsave("./figures/figureS8_2010_2020_SOCchange.png", plot = p_2010_2020_cap, bg = "white", dpi = 600, width = 200 / 25.4, height = 180 / 25.4, units = "in")
+plot_yf_MAP_pred <- heatmap_MAP_pred(mod, df_std, cond_str="young forest",
+                                     yr_span=c(1992,2020), MAP_span=c(minMAP_yf,maxMAP_yf)) + ggtitle("Young Forest")
+plot_of_MAP_pred <- heatmap_MAP_pred(mod, df_std, cond_str="old forest",
+                                     yr_span=c(1992,2020), MAP_span=c(minMAP_yf,maxMAP_yf)) + ggtitle("Old Forest")
+plot_g_MAP_pred <- heatmap_MAP_pred(mod, df_std, cond_str="grassland",
+                                    yr_span=c(1992,2020), MAP_span=c(minMAP_g,maxMAP_g)) + ggtitle("Grassland")
 
-#-----------------Figure S9. Est. map and SE 1992-2020 (main approach)--------------------------
+# assemble
+p_heatmap <- grid.arrange(plot_yf_MAT_pred,plot_yf_MAP_pred,
+                          plot_of_MAT_pred,plot_of_MAP_pred,
+                          plot_g_MAT_pred,plot_g_MAP_pred,
+                          ncol=2)
 
-# generate panels
-avg_youngforest <- plot_single_delta(summary_youngforest1992_2020[summary_youngforest1992_2020$proportion>0,], "annual_mean")+ggtitle("young forest")
-sd_youngforest <- plot_single_value(summary_youngforest1992_2020[summary_youngforest1992_2020$proportion>0,], "annual_sd")+ggtitle(" ")
-total_youngforest <- plot_single_delta(summary_youngforest1992_2020[summary_youngforest1992_2020$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_oldforest <- plot_single_delta(summary_oldforest1992_2020[summary_oldforest1992_2020$proportion>0,], "annual_mean")+ggtitle("old forest")
-sd_oldforest <- plot_single_value(summary_oldforest1992_2020[summary_oldforest1992_2020$proportion>0,], "annual_sd")+ggtitle(" ")
-total_oldforest <- plot_single_delta(summary_oldforest1992_2020[summary_oldforest1992_2020$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
-avg_grassland <- plot_single_delta(summary_grassland1992_2020[summary_grassland1992_2020$proportion>0,], "annual_mean")+ggtitle("grassland")
-sd_grassland <-  plot_single_value(summary_grassland1992_2020[summary_grassland1992_2020$proportion>0,], "annual_sd")+ggtitle(" ")
-total_grassland <- plot_single_delta(summary_grassland1992_2020[summary_grassland1992_2020$proportion>0,], "annual_mean_GgperPixel")+ggtitle(" ")
+# save
+ggsave(paste0(fig_dir, "/figuresS?_heatmap.png"),# "./figureS3_heatmap.png", 
+       plot = p_heatmap, bg = "white", dpi = 600, width = 183 / 25.4, height = 183 / 25.4, units = "in")
 
-gavg_yf <- ggplotGrob(avg_youngforest+ theme(legend.position = "none"))
-gsd_yf  <- ggplotGrob(sd_youngforest+ theme(legend.position = "none"))
-gt_yf <- ggplotGrob(total_youngforest+ theme(legend.position = "none"))
-gavg_of <- ggplotGrob(avg_oldforest+ theme(legend.position = "none"))
-gsd_of  <- ggplotGrob(sd_oldforest + theme(legend.position = "none"))
-gt_of <- ggplotGrob(total_oldforest+ theme(legend.position = "none"))
-gavg_g <- ggplotGrob(avg_grassland+ theme(legend.position = "none"))
-gsd_g  <- ggplotGrob(sd_grassland+ theme(legend.position = "none"))
-gt_g <- ggplotGrob(total_grassland+ theme(legend.position = "none"))
 
-legend_avg_yf <- get_legend(ggplotGrob(avg_youngforest))
-legend_sd_yf  <- get_legend(ggplotGrob(sd_youngforest))
-legend_t_yf <- get_legend(ggplotGrob(total_youngforest))
-legend_avg_of <- get_legend(ggplotGrob(avg_oldforest))
-legend_sd_of  <- get_legend(ggplotGrob(sd_oldforest))
-legend_t_of <- get_legend(ggplotGrob(total_oldforest))
-legend_avg_g <- get_legend(ggplotGrob(avg_grassland))
-legend_sd_g  <- get_legend(ggplotGrob(sd_grassland))
-legend_t_g <- get_legend(ggplotGrob(total_grassland))
+#-----------------Figure S4 predictor layer maps ------------
+predicted_pixels <- rbind(input_grassland_pred,
+                          input_youngforest_pred,input_oldforest_pred) %>%
+  distinct(x,y)
 
-# plot 
-p_1992_2020_cap <- 
-  plot_grid(
-    plot_grid(ggpubr::text_grob("Average SOC Change\n(MgC/ha yr-1)"),
-              gavg_yf,gavg_of,gavg_g, ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_avg_yf,legend_avg_of, legend_avg_g,ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    plot_grid(ggpubr::text_grob("Standard Error\n(MgC/ha yr-1)"),
-              gsd_yf,gsd_of,gsd_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(), 
-              legend_sd_yf,legend_sd_of,legend_sd_g, heights=c(0.1,1,1,1), ncol =1, align="hv"),
-    plot_grid(ggpubr::text_grob("Total SOC change\nper 0.5° pixel (Gg/yr)"),
-              gt_yf,gt_of,gt_g,ncol = 1, heights=c(0.1,1,1,1), align = "hv"), 
-    plot_grid(grid::nullGrob(),
-              legend_t_yf,legend_t_of,legend_t_g, ncol =1, heights=c(0.1,1,1,1), align="hv"),
-    ncol=6, align = "hv",rel_widths = c(7,2.5,7,2.5,7,2.5)
-  )
-
-ggsave("./figures/figureS9_1992_2020_SOCchange.png", plot = p_1992_2020_cap, bg = "white", dpi = 600, width = 200 / 25.4, height = 180 / 25.4, units = "in")
-
-#-----------------Figure S10. Significant pixels -------------------------------
-
-# filter delta dataframes for significant pixels
-#1990-2000
-summary_youngforest1990_sig <- summary_youngforest1990 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_oldforest1990_sig <- summary_oldforest1990 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_grassland1990_sig <- summary_grassland1990 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-# 2000-2010
-summary_youngforest2000_sig <- summary_youngforest2000 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_oldforest2000_sig <- summary_oldforest2000 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_grassland2000_sig <- summary_grassland2000 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-# 2010-2020
-summary_youngforest2010_sig <- summary_youngforest2010 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_oldforest2010_sig <- summary_oldforest2010 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_grassland2010_sig <- summary_grassland2010 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-# 1992-2020
-summary_youngforest1992_2020_sig <- summary_youngforest1992_2020 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_oldforest1992_2020_sig <- summary_oldforest1992_2020 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-summary_grassland1992_2020_sig <- summary_grassland1992_2020 %>%
-  dplyr::filter(proportion>0) %>%
-  dplyr::filter( (annual_97.5>=0 & annual_2.5>=0) | (annual_97.5<=0 & annual_2.5<=0) )
-
-# plot
-yf_1990_sig <- ggplotGrob(plot_single_delta(summary_youngforest1990_sig, "annual_mean")+ggtitle("1990-2000"))
-yf_2000_sig <- ggplotGrob(plot_single_delta(summary_youngforest2000_sig, "annual_mean")+ggtitle("2000-2010"))
-yf_2010_sig <- ggplotGrob(plot_single_delta(summary_youngforest2010_sig, "annual_mean")+ggtitle("2010-2020"))
-yf_total_sig <- ggplotGrob(plot_single_delta(summary_youngforest1992_2020_sig, "annual_mean")+ggtitle("1992-2020"))
-
-of_1990_sig <- ggplotGrob(plot_single_delta(summary_oldforest1990_sig, "annual_mean")+ggtitle("1990-2000"))
-of_2000_sig <- ggplotGrob(plot_single_delta(summary_oldforest2000_sig, "annual_mean")+ggtitle("2000-2010"))
-of_2010_sig <- ggplotGrob(plot_single_delta(summary_oldforest2010_sig, "annual_mean")+ggtitle("2010-2020"))
-of_total_sig <- ggplotGrob(plot_single_delta(summary_oldforest1992_2020_sig, "annual_mean")+ggtitle("1992-2020"))
-
-g_1990_sig <- ggplotGrob(plot_single_delta(summary_grassland1990_sig, "annual_mean")+ggtitle("1990-2000"))
-g_2000_sig <- ggplotGrob(plot_single_delta(summary_grassland2000_sig, "annual_mean")+ggtitle("2000-2010"))
-g_2010_sig <- ggplotGrob(plot_single_delta(summary_grassland2010_sig, "annual_mean")+ggtitle("2010-2020"))
-g_total_sig <- ggplotGrob(plot_single_delta(summary_grassland1992_2020_sig, "annual_mean")+ggtitle("1992-2020"))
-
-# plot
-p_sig_cap <- 
-  plot_grid(
-    plot_grid(ggpubr::text_grob("Young forest (MgC/ha yr-1)"),
-              yf_1990_sig,yf_2000_sig,yf_2010_sig, yf_total_sig, ncol = 1, heights=c(0.1,1,1,1,1), align = "hv"), 
-    plot_grid(ggpubr::text_grob("Old forest (MgC/ha yr-1)"),
-              of_1990_sig,of_2000_sig,of_2010_sig, of_total_sig, ncol = 1, heights=c(0.1,1,1,1,1), align = "hv"), 
-    plot_grid(ggpubr::text_grob("Grassland (MgC/ha yr-1)"),
-              g_1990_sig,g_2000_sig,g_2010_sig, g_total_sig, ncol = 1, heights=c(0.1,1,1,1,1), align = "hv"), 
-    ncol=3, align = "hv"#,rel_widths = c(7,2,7,2,7,2)
-  )
-
-ggsave("./figures/figureS10_sig_SOCchange.png", plot = p_sig_cap, bg = "white", dpi = 600, width = 183 / 25.4, height = 180 / 25.4, units = "in")
-
-#-----------------Figure S11 predictor layer maps ------------
 # omit NA values
-clay_df <- clay_df %>%  na.omit()
-n_pct_df <- n_pct_df %>% na.omit()
-ph_df <- ph_df %>% na.omit()
+clay_df_omit <- merge(predicted_pixels, clay_df, all.x=T)
+n_pct_df_omit <- merge(predicted_pixels, n_pct_df, all.x=T)
+ph_df_omit <- merge(predicted_pixels, ph_df, all.x=T)
 
-mat_1992_df_omit <- mat_1992_df %>% na.omit()
-map_1992_df_omit <- map_1992_df %>% na.omit()
+mat_1992_df_omit <- merge(predicted_pixels, mat_1992_df, all.x=T)
+map_1992_df_omit <- merge(predicted_pixels, map_1992_df, all.x=T)
 
-p_input_layers <-
-  grid.arrange(plot_single_value_viridis(mat_1992_df_omit, var_name="value") + ggtitle("MAT, year 1992 (°C)"), 
-               plot_single_value_viridis(map_1992_df_omit, var_name="value") + ggtitle("MAP, year 1992 (mm)"),
-               plot_single_value_viridis(n_pct_df, var_name="value") + ggtitle("soil Nitrogen (%)"),
-               plot_single_value_viridis(clay_df, var_name="value") + ggtitle("soil clay (%)"),
-               plot_single_value_viridis(ph_df, var_name="value") + ggtitle("soil pH"),
-               ncol=2)
+# plot input layers
+p_mat <- plot_single_value_viridis(mat_1992_df_omit, var_name="value", 
+                                   panel_title="", include_legend=T, legend_name="MAT 1992 (°C)")
+p_map <- plot_single_value_viridis(map_1992_df_omit, var_name="value", 
+                                   panel_title="", include_legend=T, legend_name="MAP 1992 (mm)")
+p_n_pct <- plot_single_value_viridis(n_pct_df_omit, var_name="value", 
+                                     panel_title="", include_legend=T, legend_name="Soil nitrogen (%))")
+p_clay <- plot_single_value_viridis(clay_df_omit, var_name="value", 
+                                    panel_title="", include_legend=T, legend_name="Soil clay (%)")
+p_ph <- plot_single_value_viridis(ph_df_omit, var_name="value", 
+                                  panel_title="", include_legend=T, legend_name="Soil pH")
+
+# Combine 9 panels in 3 columns x 3 rows layout
+p_input_layers <- 
+  (p_mat | p_map) /
+  (p_n_pct | p_clay) /
+  (p_ph | plot_spacer() ) +
+  plot_layout(heights = c(1, 1, 1)) &
+  theme(plot.tag = element_text(face = "bold", size = 13))
 
 #save
-ggsave("./figures/figureS11_predictor_layers.png", plot = p_input_layers, bg = "white", dpi = 600, width = 183 / 25.4, height = 180 / 25.4, units = "in")
+ggsave(paste0(fig_dir, "figureS?_predictor_layers.png"), plot = p_input_layers, bg = "white", dpi = 600, width = 183 / 25.4, height = 180 / 25.4, units = "in")
 
-#-----------------Figure S12 land use proportions ----------------------
+#-----------------Figure S5 land use proportions ----------------------
 # make into one map per land use (cuz every decade is the same extent now)
 # use truncated or not tunrcate version?
 # use input_lc_pred, or input_lc_all # maybe do _pred for now see what people say
 # or do one _pred one the difference between _all and _pred (to show the uncaptured pixels?)
 # that seems redundant with the truncation extent layer
 
-# plot 
+# plot land cover fractions (modify to vertical legend on the right)
+p_g_fraction <- plot_single_value_viridis(input_grassland_pred, var_name="proportion", 
+                                          panel_title="grassland", include_legend=T, legend_name="fraction") + 
+  guides(fill = guide_colorbar(
+    title.position = "top",
+    title.hjust = 0.5,
+    barwidth = 0.5,      # ← swapped from 10
+    barheight = 6,      # ← swapped from 0.5
+    orientation = "vertical"  # ← add this
+  )) +
+  theme(legend.position = "right")
+p_yf_fraction <- plot_single_value_viridis(input_youngforest_pred, var_name="proportion", 
+                                           panel_title="young forest", include_legend=T, legend_name="fraction") +
+  guides(fill = guide_colorbar(
+    title.position = "top",
+    title.hjust = 0.5,
+    barwidth = 0.5,      # ← swapped from 10
+    barheight = 6,      # ← swapped from 0.5
+    orientation = "vertical"  # ← add this
+  )) +
+  theme(legend.position = "right")
+p_of_fraction <- plot_single_value_viridis(input_oldforest_pred, var_name="proportion", 
+                                           panel_title="old forest", include_legend=T, legend_name="fraction") + 
+  guides(fill = guide_colorbar(
+    title.position = "top",
+    title.hjust = 0.5,
+    barwidth = 0.5,      # ← swapped from 10
+    barheight = 6,      # ← swapped from 0.5
+    orientation = "vertical"  # ← add this
+  )) +
+  theme(legend.position = "right")
+
 p_fraction <- 
-  grid.arrange(
-    ggplotGrob(plot_single_value_viridis(input_youngforest_pred, "proportion")+ggtitle("Young forest")),
-    ggplotGrob(plot_single_value_viridis(input_oldforest_pred, "proportion")+ggtitle("Old forest")),
-    ggplotGrob(plot_single_value_viridis(input_grassland_pred, "proportion")+ggtitle("Grassland")),
-    ncol=1, nrow=3, heights=c(1,1,1)#, widths=c(1,1,1)
-  )
+  p_g_fraction /
+  p_yf_fraction /
+  p_of_fraction  +
+  theme(plot.tag = element_text(face = "bold", size = 13))
 
 #save
-ggsave("./figures/figureS12_fraction.png", plot = p_fraction, bg = "white", dpi = 600, width = 183 / 25.4, height = 180 / 25.4, units = "in")
-
-#-----------------Figure S13 GCB terms illustration ---------------------------
-# this figure is manually made in powerpoint
-
-#-----------------Figure S14 SOC temporal trends fit by only time series ------
-# this is plotted by loading "brms1_timeseries_37k12chain.rda" into script 
-# Figure1.R
+ggsave(paste0(fig_dir, "/FigureS?_fraction.png"), plot = p_fraction, bg = "white", 
+       dpi = 600, width = 183 / 25.4, height = 210 / 25.4, units = "in")

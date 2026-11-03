@@ -1,473 +1,336 @@
-# Figure 2: regional estimates and uncertainty
+# Figure 2: SOC sink estimates in posterior violins by cover class and period
 rm(list = ls(all = TRUE))
-
-# package and direcotry
-library(dplyr)
-library(brms)
-library(raster)
-library(terra)
-library(rasterVis)
-library(tictoc)
-library(RColorBrewer)
-library(ggplot2)
-library(cowplot)
-library(sf)
-library(gridExtra)
-library(stringr)
-library(patchwork)
-
-# working directory should be set by default to the folder of entire repo (R project)
-
-# load proportion_decade_df
-#load("./data/proportion_decade_df.rda")
-load("./data/proportion_decade_df.rda")
-# load prediction results
-#load("./results/upscaled_regional_summary.RData")
-load("./results/find_CI_bayesian_cap2_exclude_same_extent.RData")
-
-# load countries boundary
-# # load world administrative boundaries (see 00_download_prepare_spatial_data.R)
-# # https://public.opendatasoft.com/explore/dataset/world-administrative-boundaries/export/?flg=en-us
-#countries_sf <- read_sf("./data/world-administrative-boundaries/world-administrative-boundaries.shp")
-countries_sf <- read_sf("/Users/jiaruofei/MIT Dropbox/Ruofei Jia/maps/world-administrative-boundaries/world-administrative-boundaries.shp")
-countries_sf <- st_make_valid(countries_sf)
-countries_sf <- st_transform(countries_sf, 4326)
-
-#------------ load palette ---------------
-# palette for land cover type
-type_palette <- c(
-  "young forest" = "#c8445b",
-  "old forest" = "#4d5ca1",
-  "grassland" = "#66aa8b"
-)
-
-# palette for regions
-region_palette <- c(
-  # boreal
-  "Alaska" = "cornsilk3",# hex "#cdc8b1"
-  "Canada" = "#e6beb6", #"coral4",
-  "Northern Europe" = "lightyellow2", # hex "#EEEED1"
-  "European Russia" = "burlywood", # hex "#DEB887"
-  "Asian Russia" = "#e0dcc6", #"lightgoldenrod4",
-  # temperate 
-  "Europe" = "#f0cfde", #"hotpink3",
-  "Continental United States" = "#fad9d0", #"salmon2",
-  "China" = "#ffecef", #"pink",
-  "Japan and Korea" = "#ffdfa3", #"orange3",
-  "Australia" = "#fce4cf", # "sandybrown",
-  "New Zealand" = "#ffe4b3", # "orange",
-  "Other temperate" = "#fad9d9", #"lightcoral",
-  "Others" = "#ffebff", #"plum1", 
-  # tropical
-  "Africa" = "#faf5d9", #"lightgoldenrod",
-  "Mexico and Central America" = "#c7ff90", #"chartreuse4",
-  "South America" = "#defade", #"lightgreen",
-  "Southeast Asia"= "#e1f0c2", #"yellowgreen",
-  "South Asia" = "#f0eed5" #"khaki3" #,
-  #NA = "gray"
-)
-
-reccap_palette <- c(
-  "Africa" = "#faf5d9",
-  "Europe" = "#f0cfde",
-  "North America" = "burlywood",
-  "Other" = "#ffebff",
-  "Russia" = "#e0dcc6",
-  "Australia" = "#fce4cf",
-  "South America" = "#defade",
-  "Southeast Asia" = "#e1f0c2",
-  "East Asia" = "#ffe4b3",
-  "South Asia" = "#f0eed5"
-)
- 
-#-----------------Figure 2a base map ----------------------------
-# 3a: region base map. Will put regional estimates on top in illustrator
-
-# tried with reccap but decided not to use
-# regional_base <- ggplot() +
-#   #geom_sf(data=countries_sf, fill=NA, col=NA) + # plot background with sf
-#   # geom_tile(data=proportion_decade_df, aes(x=x, y=y), # plot background (greenland with tiles)
-#   #           color="gray",fill="gray", alpha=1) +
-#   geom_tile(data=proportion_decade_df[!is.na(proportion_decade_df$reccap_region),],
-#             aes(x=x, y=y, color=reccap_region, fill=reccap_region), alpha=1) +
-#   scale_fill_manual(values = reccap_palette) +
-#   scale_color_manual(values = reccap_palette) +
-#   labs(x=NULL, y=NULL,fill=NULL, tags="A") +
-#   # scale_x_continuous(expand=c(0,0)) +
-#   # scale_y_continuous(expand=c(0,0)) +
-#   coord_fixed() +
-#   theme_bw() +
-#   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-#         legend.position = "none",
-#         axis.title.x = element_blank(),  # Remove x-axis title
-#         axis.title.y = element_blank(),  # Remove y-axis title
-#         axis.text.x = element_blank(),    # Remove x-axis text
-#         axis.text.y = element_blank(),    # Remove y-axis text
-#         axis.ticks.x = element_blank(),   # Remove x-axis ticks
-#         axis.ticks.y = element_blank(),   # Remove y-axis ticks,
-#         panel.border = element_blank(),
-#         panel.background = element_rect(fill='white', color=NA),
-#         plot.background = element_rect(fill='white', color=NA),
-#         plot.tag = element_text(face = "bold",size = 10),
-#         plot.tag.position = c(0.01, 1),
-#         plot.margin=margin(0, 0, 0, 0)
-#   )
+library(ggplot2); library(dplyr); library(grid)
 
 
-regional_base <- ggplot() +
-  #geom_sf(data=countries_sf, fill=NA, col=NA) + # plot background with sf
-  # geom_tile(data=proportion_decade_df, aes(x=x, y=y), # plot background (greenland with tiles)
-  #           color="gray",fill="gray", alpha=1) +
-  geom_tile(data=proportion_decade_df[!is.na(proportion_decade_df$pan_region_new2),],
-            aes(x=x, y=y, color=pan_region_new2, fill=pan_region_new2), alpha=1) +
-  scale_fill_manual(values = region_palette) +
-  scale_color_manual(values = region_palette) +
-  labs(x=NULL, y=NULL,fill=NULL, tags="A") +
-  # scale_x_continuous(expand=c(0,0)) +
-  # scale_y_continuous(expand=c(0,0)) +
-  coord_fixed() +
-  theme_bw() +
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-        legend.position = "none",
-        axis.title.x = element_blank(),  # Remove x-axis title
-        axis.title.y = element_blank(),  # Remove y-axis title
-        axis.text.x = element_blank(),    # Remove x-axis text
-        axis.text.y = element_blank(),    # Remove y-axis text
-        axis.ticks.x = element_blank(),   # Remove x-axis ticks
-        axis.ticks.y = element_blank(),   # Remove y-axis ticks,
-        panel.border = element_blank(),
-        panel.background = element_rect(fill='white', color=NA),
-        plot.background = element_rect(fill='white', color=NA),
-        plot.tag = element_text(face = "bold",size = 10),
-        plot.tag.position = c(0.01, 1),
-        plot.margin=margin(0, 0, 0, 0)
-  )
+# ------------------- set up ---------------------------------------------------
+decade_label <- c("1990"="1992-2000","2000"="2000-2010",
+                  "2010"="2010-2020","1992-2020"="1992-2020")
+year_span    <- c("1992-2000"=8,"2000-2010"=10,
+                  "2010-2020"=10,"1992-2020"=28)
 
-regional_base
+# land cover class order
+series_levels <- c("total","grassland","young forest","old forest")  
+series_pal <- c("total"="#2B2B2B","grassland"="#E1A02A",   
+                "young forest"="#3C8DC4","old forest"="#8064B0") 
+# horizontal dodge within a period
+series_off <- c("total"=-0.17,"grassland"=0.03,            
+                "young forest"=0.23,"old forest"=0.43)
+# horizontal locations
+period_x   <- c("1992-2000"=1,"2000-2010"=2,"2010-2020"=3,"1992-2020"=4.4)
+whole_period    <- "1992-2020"   # drawn as a separate panel on the right
+divider_x       <- 3.85 # location of vertical divider for the 1992-2020 period
 
-# save
-ggsave("./figures/Fig2a_base.png", plot = regional_base, bg = "white", dpi = 600, width = 0.8*183 / 25.4, height = 60 / 25.4, units = "in")
+# violin widths and transparency
+global_width <- 0.15
+type_width <- 0.09
+type_alpha <- 0.7
 
+# plotting parameters
+show_significance <- TRUE   # TRUE: fill points whose 95% CrI excludes 0; FALSE: all hollow
+show_psink        <- TRUE   # P(sink) labels above the global violins
+show_values       <- TRUE   # sink value + 95% CrI labels, above the P(sink) labels
 
-#--------------------- 2b: uncertainty by latitude -----------------------------
-load("./results/find_CI_bayesian_cap2_exclude_same_extent_pixel_summary.RData")
+# axis limit
+y_lo <- -0.85
+y_hi <- 2.06
+x_lo <- 0.55
+x_hi <- 5.00
 
-# set function that summarize pixel results by latitude as mean, sd, total
-sum_by_lat <- function(layer_df, var_name="se_annual", type_str="young forest") {
-  # layer_df should have column x, y
-  # generate summarizing dataset
-  sum_df_type <- layer_df %>% group_by(y) %>%
-    dplyr::summarize(
-      mean = mean(!!sym(var_name), na.rm=T),
-      median = median(!!sym(var_name), na.rm=T),
-      sd = sd(!!sym(var_name), na.rm=T)
-    ) %>%
-    dplyr::mutate(type=type_str)
+# figure size as printed
+W_CM <- 18.0; H_CM <- 11.2
+## ===========================================================================
+
+## ---- load -----------------------------------------------------------------
+# SOC sink estimates
+draws_file   <- "./results/find_CI_bayesian_cap2_exclude_ts_extent_numbers_timeseries_new.RData"
+summary_file <- "./results/find_CI_bayesian_cap2_exclude_ts_extent_timeseries_new.RData"
+
+load(draws_file)
+load(summary_file)
+
+## ---- sink/source color field ---------------------------------------------
+# Violins keep their sink/source gradient: green above zero
+# (sink), sand below (source), fading to white at the zero line.
+# land cover class is carried by the markers/lines/legend (Figure 1 palette), not the violin fill.
+# *_v = strong ramp for the violins;  *_b = very faint ramp for the background.
+
+# make 101 gradient colors for violin ramps
+SINK_v <- colorRampPalette(c("#FBFEFC","#4E9C82"))(101)
+SOURCE_v <- colorRampPalette(c("#FDFCFA","#D3A867"))(101)
+SINK_b <- colorRampPalette(c("#FFFFFF","#E4EFE9"))(101)
+SOURCE_b <- colorRampPalette(c("#FFFFFF","#F5ECDD"))(101)
+
+# divide color
+div_col <- function(y, # SOC sink value on the y axis
+                    ramp_pos=SINK_v, 
+                    ramp_neg=SOURCE_v, 
+                    ref_value=1.35, ease=0.85) {
   
-  return(sum_df_type)
+  # map y value to index in color gradient list 
+  i <- round(pmin(abs(y)/ref_value,1)^ease * 100) + 1
+  # pick color list for sink or source
+  ifelse(y>=0, ramp_pos[i], ramp_neg[i])
 }
 
-# summarize bayesian standard deviation
-sum_sd_yf <- sum_by_lat(summary_youngforest1992_2020[summary_youngforest1992_2020$proportion>0,], 
-                        var_name="annual_sd", type_str="young forest")
-sum_sd_of <- sum_by_lat(summary_oldforest1992_2020[summary_oldforest1992_2020$proportion>0,], 
-                        var_name="annual_sd", type_str="old forest")
-sum_sd_g <- sum_by_lat(summary_grassland1992_2020[summary_grassland1992_2020$proportion>0,], 
-                       var_name="annual_sd", type_str="grassland")
+## ---- 1. Annualized posterior draws per series x period --------------------
+# For each series x period, annualize its 3000 draws (delta / year-span). These
+# drive BOTH the densities and the CrI quantiles.
 
-# combine into one df
-sum_sd <- rbind(sum_sd_yf,sum_sd_of,sum_sd_g) %>%
-  dplyr::mutate(type=factor(type, levels=c("young forest", "old forest", "grassland"))) %>%
-  group_by(type) %>%
+# list of column names for posterior draws
+draw_cols <- grep("^delta_total", names(sum_delta_global), value=TRUE)
+
+# function that group SOC sink estimates for plotting
+group_draws <- function(df, series_fixed=NULL) {
+  # add period and series (land cover) columns to df
+  df$period <- decade_label[as.character(df$decade)] # get corresponding decade label here
+  df$series <- if (is.null(series_fixed)) as.character(df$type) else series_fixed
+  
+  # for each row
+  lapply(seq_len(nrow(df)), function(i) {
+    # extract series and period
+    series <- as.character(df$series[i])
+    period <- df$period[i]
+    # divide all delta value by year_span
+    v <- as.numeric(unlist(df[i, draw_cols])) / year_span[period]
+    # get
+    list(series = series, period = period, v = v)
+  })
+}
+
+groups <- c(group_draws(sum_delta_global, "total"),
+            group_draws(sum_delta_combined_type))
+
+# location on x axis based on series (land cover) and period (decade)
+xpos <- function(series, period)                 
+  unname(period_x[period] + series_off[as.character(series)])
+
+# collate dataframe for plotting mean and error bar
+qtab <- sum_delta_global %>%
+  dplyr::mutate(type = "total") %>%
+  dplyr::bind_rows(sum_delta_combined_type) %>%
+  dplyr::rowwise() %>%
   dplyr::mutate(
-    #relative_mean_sd = mean/max(mean, na.rm=T),
-    relative_median_sd = median/max(median, na.rm=T),
+    mean = mean(c_across(contains("delta_total")), na.rm = TRUE),
+    median = median(c_across(contains("delta_total")), na.rm = TRUE),
+    q025 = quantile(c_across(contains("delta_total")), 0.025, na.rm = TRUE),
+    q17 = quantile(c_across(contains("delta_total")), 0.17, na.rm = TRUE),
+    q83 = quantile(c_across(contains("delta_total")), 0.83, na.rm = TRUE),
+    q975 = quantile(c_across(contains("delta_total")), 0.975, na.rm = TRUE),
+    min = min(c_across(contains("delta_total")), na.rm = TRUE),
+    max = max(c_across(contains("delta_total")), na.rm = TRUE),
+    p_above = sum(c_across(contains("delta_total"))>0)/length(c_across(contains("delta_total")) )
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-contains("delta_total")) %>%
+  dplyr::rename(series = type) %>%
+  dplyr::mutate(period = decade_label[as.character(decade)]) %>%
+  dplyr::select(-decade) %>%
+  dplyr::mutate(yearspan = year_span[period]) %>%
+  dplyr::mutate(
+    mean = mean / yearspan,
+    median = median / yearspan,
+    q025 = q025 / yearspan,
+    q17 = q17 / yearspan,
+    q83 = q83 / yearspan,
+    q975 = q975 / yearspan,
+    min = min / yearspan,
+    max = max / yearspan,
+  ) %>%
+  dplyr::select(series, period, mean, median, min, q025, q17, q83, q975, max, p_above)
+
+# format to plotting mean and error bar
+est <- qtab %>%
+  mutate(
+    # point and intervals
+    point = mean, 
+    lo_thick = q17,
+    hi_thick = q83,
+    lo_thin = q025,
+    hi_thin = q975,
+    # Significance flags
+    sig = p_above > 0.975 | p_above < 0.025,
+    series = factor(series, levels = series_levels),
+    x = xpos(series, period),
+    ptfill = if (show_significance) 
+      ifelse(sig, series_pal[as.character(series)], "white") 
+    else "white"
+  ) %>%
+  select(series, period, mean,p_above, 
+         q025, q17, q83, q975, point, lo_thick, hi_thick, 
+         lo_thin, hi_thin, sig, x, ptfill)
+
+## ---- 3. SOC sink estimate densities (half violins) ---------------------------------------------------------
+
+# combine global (with type="total") and by-type data
+df_posterior_long <- sum_delta_global %>%
+  mutate(type = "total") %>%
+  bind_rows(sum_delta_combined_type) %>%
+  select(-type_area_ha) %>%
+  dplyr::rename(series = type) %>%
+  dplyr::mutate(period = decade_label[as.character(decade)]) %>%
+  dplyr::select(-decade) %>%
+  dplyr::mutate(yearspan = year_span[period]) %>%
+  pivot_longer(cols = starts_with("delta"), 
+               names_to = "sample", 
+               values_to = "delta_value") %>%
+  mutate(annual_value = delta_value/ yearspan)
+
+# create density objects and extract x, y
+dens <- df_posterior_long %>%
+  group_by(series, period) %>%
+  # combine data by group
+  nest() %>%
+  mutate(
+    # make density function by each decade
+    density_obj = map(data, ~density(.$annual_value, n = 512)),
+    # extract posterior sink and density
+    sink = map(density_obj, "x"),
+    density = map(density_obj, "y")
+  ) %>%
+  select(-data, -density_obj) %>%
+  # unnest to get each row with a sink and density
+  unnest(cols = c(sink, density)) %>%
+  ungroup() %>%
+  mutate(block = ifelse(series == "total", "global", "type")) %>%
+  group_by(period, block) %>%
+  # get width of strip by normalizing density
+  mutate(width = density / max(density) * 
+           (if (first(block) == "global") global_width else type_width)) %>%
+  ungroup() %>%
+  # format x position and id (per violin) for plotting
+  mutate(
+    series = factor(series, levels = series_levels),
+    x_center = xpos(series, period),
+    id = as.integer(interaction(series, period, drop = TRUE))
   )
 
-# plot
-p_sd_latitude <- ggplot(sum_sd) + 
-  geom_path(aes(x=relative_median_sd, y=y, group=type, color=type) ) + 
-  scale_color_manual(values = type_palette) + 
-  scale_y_continuous(breaks=c(-50, 0, 50, 80), labels = ~ paste0(.x, "\u00B0")) +
-  scale_x_continuous(breaks=c(0, 1),limits=c(0, 1)) + 
-  labs(x="relative\nuncertainty", y=NULL, title=NULL,tags="B") + # y="latitude" # , 
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-        panel.background = element_blank(), axis.line = element_line(color = "black"),
-        legend.title=element_blank(), legend.position="none",
-        plot.tag = element_text(face = "bold",size = 10),
-        plot.tag.position = c(-0.01, 1),
-        plot.margin = margin(5, 10, 0, 5),
-        axis.title = element_text(size = 9)
-        ) # top, right, bottom, left, default all 5.5
+# clip to panel, trim thin tails (<3% of peak), slice into gradient strips
+strips <- dens %>% group_by(id) %>%
+  filter(density >= 0.03*max(density)) %>% # sink >= y_lo, sink <= y_hi, 
+  arrange(sink, .by_group=TRUE) %>%
+  # get values from next row for sink and width (to plot rectangle strips)
+  mutate(
+    sink2 = lead(sink), 
+    width2 = lead(width)
+  ) %>% 
+  ungroup() %>% 
+  filter(!is.na(sink2)) %>%
+  mutate(id, series, 
+         is_global = series=="total",
+         xmin = x_center - (width+width2)/2, 
+         xmax = x_center,
+         ymin = sink, ymax = sink2, 
+         ymid = (sink+sink2)/2,
+         .keep="none"
+  ) %>%
+  # assign colors gradient (green up, sand down) to all stripes
+  mutate(fill = div_col(ymid) )
 
-p_sd_latitude
+# violin outline for global esitmates
+outline_g <- strips %>% filter(is_global) %>% arrange(id, ymid)
 
-# save
-ggsave("./figures/Fig2b_panel.png", plot = p_sd_latitude, bg = "white", dpi = 600, width = 0.2*183 / 25.4, height = 60 / 25.4, units = "in")
+# faint outline on the CLASS violins too, so near-zero ones (e.g. 1992-2000
+# grassland, 2010-2020 young/old forest) read against the background gradient
+outline_a <- strips %>% filter(!is_global) %>% arrange(id, ymid)
 
-#------------------------ Figure2 legend----------------------------------------
-# Create data frames for regions legend
-region_df <- data.frame(
-  region = names(region_palette),
-  color = unname(region_palette),
-  biome = c(rep("Boreal", 5), rep("Temperate", 7), "Other", rep("Tropical", 5)),
-  x = 1
-) %>%
-  group_by(biome) %>%
-  mutate(y = -row_number()) %>%
-  ungroup()
+## ---- SOC sink change (strengthen/weakening and annotations ------------------------
+# global estimate
+eg <- filter(est, series=="total")
+# estimates of type
+ea <- filter(est, series!="total")
+# decadal global estimate
+dec_g <- filter(eg, period!=whole_period)
+# decadal estimate by type
+dec_a <- filter(ea, period!=whole_period)
 
-# create dataframe for land cover type legend
-type_df <- data.frame(
-  type = str_to_title(names(type_palette)[1:3]),
-  color = unname(type_palette)[1:3],
-  x = 1, y=c(-1,-2,-3)
-)
+# name posterior draw
+dvals <- setNames(lapply(groups, `[[`, "v"), vapply(groups, function(g) paste(g$series, g$period), ""))
+decs3  <- c("1992-2000","2000-2010","2010-2020")
 
-# Plot legend for each biome
-boreal_legend <- ggplot(region_df[region_df$biome=="Boreal",]) +
-  geom_rect(aes(xmin=x-0.7, xmax=x-0.1, ymin=y, ymax=y+0.6, fill=color)) +
-  geom_text(aes(x=x,y=y,label = region), hjust=0, vjust=0, size=3.5) + 
-  geom_text(aes(x=0.3, y=0, label = "Boreal"), hjust=0, vjust=0, size=3.5, fontface="bold") + 
-  scale_fill_identity() +
-  xlim(c(0.3,6)) +  ylim(c(-8,1)) +
-  labs(x = NULL, y = NULL) +
-  coord_fixed(ratio = 1,expand=T, clip = "on") +
-  theme_void() +
-  theme(legend.position = "none",
-        plot.margin = margin(0,0,0,0)
-  )
+# summarize significance of SOC sink change between decades
+# loop every type/globe and between every 2 consecutive decades
+seg_sig <- do.call(rbind, lapply(series_levels, function(s) do.call(rbind, lapply(1:2, function(k) {
+  # posterior predictions from earlier decade
+  a <- dvals[[paste(s, decs3[k])]]
+  # posterior predictions from later decade
+  b <- dvals[[paste(s, decs3[k+1])]]
+  if (is.null(a) || is.null(b)) return(NULL)
+  # probability of decadal sink increased
+  p_incr <- mean(b - a > 0)
+  # construct one row on sink change significance between every two decade
+  data.frame(series=s, 
+             x=xpos(s,decs3[k]), 
+             xend=xpos(s,decs3[k+1]),
+             y=mean(a), 
+             yend=mean(b), 
+             sig = p_incr>=0.95 | p_incr<=0.05, # P>0.9 and P>0.95 yields same significance
+             is_global = s=="total") }))))
+# factorize series
+seg_sig$series <- factor(seg_sig$series, levels=series_levels)
+# show the significant changes
+cat("significant decadal changes:\n"); print(seg_sig[seg_sig$sig, c("series","x","xend")])
 
-temperate_legend <- ggplot(region_df[region_df$biome=="Temperate",]) +
-  geom_rect(aes(xmin=x-0.7, xmax=x-0.1, ymin=y, ymax=y+0.6, fill=color)) +
-  geom_text(aes(x=x,y=y,label = region), hjust=0, vjust=0, size=3.5) + 
-  geom_text(aes(x=0.3, y=0, label = "Temperate"), hjust=0, vjust=0, size=3.5, fontface="bold") + 
-  scale_fill_identity() +
-  xlim(c(0.3,9)) +  ylim(c(-8,1)) +
-  labs(x = NULL, y = NULL) +
-  coord_fixed(ratio = 1, expand=T, clip = "on") +
-  theme_void() +
-  theme(legend.position = "none",
-        plot.margin = margin(0,0,0,0)
-  )
+# add annotations
+eg$plab <- ifelse(eg$p_above > 0.995, "italic(P)[sink] > 99*'%'",
+                  paste0("italic(P)[sink] == ", round(eg$p_above*100), "*'%'"))
+# sink value + 95% CrI (Pg C/yr) per period, drawn on the top line, above the P(sink)
+eg$vlab <- gsub("-", "−", sprintf("%.2f [%.2f, %.2f]", eg$point, eg$lo_thin, eg$hi_thin))
 
-tropical_other_legend <- ggplot(region_df[region_df$biome=="Tropical",]) +
-  geom_rect(aes(xmin=x-0.7, xmax=x-0.1, ymin=y, ymax=y+0.6, fill=color)) +
-  geom_text(aes(x=x,y=y,label = region), hjust=0, vjust=0, size=3.5) + 
-  geom_text(aes(x=0.3, y=0, label = "Tropical"), hjust=0, vjust=0, size=3.5, fontface="bold") + 
-  scale_fill_identity() +
-  xlim(c(0.3,10)) +  ylim(c(-8,1)) +
-  labs(x = NULL, y = NULL) +
-  coord_fixed(ratio = 1, expand=T, clip = "on") +
-  theme_void() +
-  theme(legend.position = "none",
-        plot.margin = margin(0,0,0,0)
-  ) + # other
-  geom_text(data=region_df[region_df$biome=="Other",],
-            aes(x=0.3, y=-6, label = "Other"), hjust=0, vjust=0, size=3.5, fontface="bold") + 
-  geom_rect(data=region_df[region_df$biome=="Other",],
-            aes(xmin=x-0.7, xmax=x-0.1, ymin=-7, ymax=-7+0.6, fill=color)) +
-  geom_text(data=region_df[region_df$biome=="Other",],
-            aes(x=x,y=-7,label = region), hjust=0, vjust=0, size=3.5)
+# background Grob with color grdient
+grad <- rasterGrob(matrix(div_col(seq(y_hi,y_lo,length.out=600), SINK_b, SOURCE_b), ncol=1),
+                   width=unit(1,"npc"), height=unit(1,"npc"), interpolate=TRUE)
 
-# Plot for type legend with rectangular symbols and labels
-type_legend <- ggplot(type_df) +
-  geom_rect(aes(xmin=x-0.7, xmax=x-0.1, ymin=y, ymax=y+0.6, fill=color)) +
-  geom_text(aes(x=x,y=y,label = type), hjust=0, vjust=0, size=3.5) + 
-  geom_text(aes(x=0.3, y=0, label = "Land Cover"), hjust=0, vjust=0, size=3.5, fontface="bold") + 
-  scale_fill_identity() +
-  xlim(c(0.3,5)) +  ylim(c(-8,1)) +
-  labs(x = NULL, y = NULL) +
-  coord_fixed(ratio = 1, expand=T, clip = "on") +
-  theme_void() +
-  theme(legend.position = "none",
-        plot.margin = margin(0,0,0,0)
-  )
-type_legend
-
-# Combine the legends
-fig2_legend <- boreal_legend |temperate_legend | tropical_other_legend | type_legend
-fig2_legend
-
-# save legend
-ggsave("./Fig2_legend.png", plot = fig2_legend, 
-       bg = "white", dpi = 600, width = 183 / 25.4, height = 80 / 25.4, units = "in")
-
-#-----------------Figure 3a: regional estimates-----------------------------------
-
-# filter to extent==all, decade=1992-2020
-regional_combined_bt_all_decades <- pan_region_CI %>% 
-  filter(decade=="1992-2020" & !is.na(pan_region_new2)) %>%
-  mutate(type = factor(type, levels=c("young forest", "old forest", "grassland")),
-         extent="all" # dummy for plotting
-         ) %>%
-  dplyr::select(-starts_with("delta")) %>%
-  dplyr::mutate(across(annual_mean:annual_97.5, ~ .* 1000))# convert all unit from PgC/yr to TgC/yr
-
-# find ylim_val from max and min value of regional numbers
-min(regional_combined_bt_all_decades$annual_mean) # -24.12343
-max(regional_combined_bt_all_decades$annual_mean) # 341.8908
-min(regional_combined_bt_all_decades$annual_2.5) # -102.5584
-max(regional_combined_bt_all_decades$annual_97.5) # 466.8566
-
-# set theme
-theme_set(theme_minimal(base_family = "Helvetica", base_size = 7))
-
-# # function that plots annual SOC change for each region (1992-2020) with error bar and region label
-# # to save, this, set width=1.2 or wider in ggsaves
-# plot_annualChange <- function(region_str="Africa", df=regional_combined_bt_all_decades, 
-#                               palette=type_palette, ylim_val=c(-120,420)) {
-#   # set df_region
-#   df_region <- df[df$pan_region_new2==region_str,]
-#   # find location for title (higher than highest error bar and number above bar)
-#   max_val <- max(max(df_region$annual_mean)+50, max(df_region$annual_97.5)) 
-#   
-#   # make region label
-#   region_label <- ifelse(grepl("Mexico", region_str), "Central America", region_str)
-#   
-#   p <- ggplot(df_region,
-#               aes(x = extent, y = annual_mean, fill=type)) +
-#     scale_fill_manual(values = palette) +
-#     #scale_color_manual(values = palette) +
-#     geom_bar(stat = "identity", position = "dodge", show.legend = F, width=0.9) +
-#     geom_text(aes(label = round(annual_mean,0), # add value numbers
-#                   y = annual_mean),
-#               position = position_dodge(width = 0.9),
-#               vjust = ifelse(df_region$annual_mean>0, -0.5, 1.5),
-#               size = 3) + # adjust size for printed text size
-#     geom_segment(aes(x = 1-0.45, # add black line in y=0
-#                      xend = 1+0.45,
-#                      y = 0,
-#                      yend = 0),
-#                  color = "black") +
-#     geom_errorbar(aes(ymin = annual_2.5, ymax = annual_97.5), 
-#     width = 0, position = position_dodge(0.9)) +
-#     # add region table
-#     # Add region label
-#     geom_text(aes(x = 1, #mean(as.numeric(extent)), 
-#                   y = max_val + 10 , vjust=0,
-#                   label = region_label),
-#               inherit.aes = FALSE, 
-#               size = 3) +
-#     labs(title = NULL, x = NULL, y =NULL) +
-#     #ylim(ylim_val) + 
-#     coord_cartesian(ylim = ylim_val, clip = "off") +
-#     theme(text = element_text(family = "Helvetica"),
-#           panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-#           panel.background = element_rect(fill='transparent', color=NA), 
-#           plot.background = element_rect(fill='transparent', color=NA),
-#           axis.line = element_blank(), axis.ticks=element_blank(),
-#           axis.text = element_blank(),
-#           plot.margin = margin(t = 5, r = 20, b = 5, l = 20, unit = "pt"))
-#   
-#   return(p)
-# }
-
-# # original one without error bar or region label
-# plot_annualChange <- function(region_str="Africa", df=regional_combined_bt_all_decades, 
-#                               palette=type_palette, ylim_val=c(-60,320)) {
-#   p <- ggplot(df[df$pan_region_new2==region_str,],
-#               aes(x = extent, y = annual_mean, fill=type)) +
-#     scale_fill_manual(values = palette) +
-#     geom_bar(stat = "identity", position = "dodge", show.legend = F) +
-#     geom_text(aes(label = round(annual_mean,0), # add value numbers
-#                   y = annual_mean),
-#               position = position_dodge(width = 0.9),
-#               vjust = ifelse(df[df$pan_region_new2 == region_str, ]$annual_mean > 0, -0.5, 1.5),
-#               size = 3) + # adjust size for printed text size
-#     geom_segment(aes(x = 1-0.45, # add black line in y=0
-#                      xend = 1+0.45,
-#                      y = 0,
-#                      yend = 0),
-#                  color = "black") +
-#     #geom_errorbar(aes(ymin = annual_2.5, ymax = annual_97.5), width = 0.2, position = position_dodge(0.9)) +
-#     labs(title = NULL, x = NULL, y =NULL) +
-#     ylim(ylim_val) + 
-#     theme(text = element_text(family = "Helvetica"),
-#           panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-#           panel.background = element_rect(fill='transparent', color=NA), 
-#           plot.background = element_rect(fill='transparent', color=NA),
-#           axis.line = element_blank(), axis.ticks=element_blank(),
-#           axis.text = element_blank())
-#   
-#   return(p)
-# }
-
-# function that plots annual SOC change for each region (1992-2020) with error bar
-plot_annualChange <- function(region_str="Africa", df=regional_combined_bt_all_decades, 
-                              palette=type_palette, ylim_val=c(-120,485)) {
-  # set df_region
-  df_region <- df[df$pan_region_new2==region_str,]
-  p <- ggplot(df_region,
-              aes(x = extent, y = annual_mean, fill=type)) +
-    scale_fill_manual(values = palette) +
-    #scale_color_manual(values = palette) +
-    geom_bar(stat = "identity", position = "dodge", show.legend = F, width=0.9) +
-    geom_text(aes(label = round(annual_mean,0), # add value numbers
-                  y = annual_mean),
-              position = position_dodge(width = 0.9),
-              vjust = ifelse(df_region$annual_mean>0, -0.5, 1.5),
-              size = 3) + # adjust size for printed text size
-    geom_segment(aes(x = 1-0.45, # add black line in y=0
-                     xend = 1+0.45,
-                     y = 0,
-                     yend = 0),
-                 color = "black") +
-    geom_errorbar(aes(ymin = annual_2.5, ymax = annual_97.5), 
-                  width = 0, position = position_dodge(0.9)) +
-    labs(title = NULL, x = NULL, y =NULL) +
-    #ylim(ylim_val) + 
-    coord_cartesian(ylim = ylim_val, clip = "off") +
-    theme(text = element_text(family = "Helvetica"),
-          panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-          panel.background = element_rect(fill='transparent', color=NA), 
-          plot.background = element_rect(fill='transparent', color=NA),
-          axis.line = element_blank(), axis.ticks=element_blank(),
-          axis.text = element_blank())
+## ---- 4. plot --------------------------------------------------------------
+p <- ggplot() +
+  annotation_custom(grad, xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+  annotate("segment", x=divider_x, xend=divider_x, y=y_lo, yend=y_hi,
+           linetype="22", color="grey75", linewidth=0.35) +
+  geom_hline(yintercept=0, color="grey40", linewidth=0.4) +
+  annotate("text", x=x_hi-0.03, y=y_hi-0.06, label="Carbon sink",
+           hjust=1, vjust=1, size=3.2, fontface="italic", color="#3F7361") +
+  annotate("text", x=x_hi-0.03, y=y_lo+0.06, label="Carbon source",
+           hjust=1, vjust=0, size=3.2, fontface="italic", color="#A67D3C") +
   
-  return(p)
-}
+  geom_rect(data=filter(strips, !is_global),
+            aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=fill), alpha=type_alpha) +
+  geom_rect(data=filter(strips, is_global),
+            aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=fill)) +
+  scale_fill_identity() +
+  geom_path(data=outline_a, aes(x=xmin, y=ymid, group=id), color="grey55", linewidth=0.14, alpha=0.55) +
+  geom_path(data=outline_g, aes(x=xmin, y=ymid, group=id), color="grey50", linewidth=0.22, alpha=0.6) +
+  
+  # connecting lines per decade step: SOLID = significant change, DASHED = not
+  geom_segment(data=filter(seg_sig, !is_global,  sig), aes(x, xend=xend, y=y, yend=yend, color=series), linewidth=0.43, alpha=0.7) +
+  geom_segment(data=filter(seg_sig, !is_global, !sig), aes(x, xend=xend, y=y, yend=yend, color=series), linewidth=0.43, alpha=0.7, linetype="22") +
+  geom_segment(data=filter(seg_sig,  is_global,  sig), aes(x, xend=xend, y=y, yend=yend, color=series), linewidth=0.78) +
+  geom_segment(data=filter(seg_sig,  is_global, !sig), aes(x, xend=xend, y=y, yend=yend, color=series), linewidth=0.78, linetype="22") +
+  # invisible point layer solely to drive the class-color legend as filled dots
+  geom_point(data=est, aes(x, point, color=series), alpha=0, show.legend=TRUE) +
+  
+  geom_linerange(data=ea, aes(x, ymin=lo_thin,  ymax=hi_thin,  color=series), linewidth=0.39, show.legend=FALSE) +
+  geom_linerange(data=ea, aes(x, ymin=lo_thick, ymax=hi_thick, color=series), linewidth=0.95, show.legend=FALSE) +
+  geom_point(data=ea, aes(x, point, fill=ptfill), shape=21, size=2.0, stroke=0.43, color="black") +
+  
+  geom_linerange(data=eg, aes(x, ymin=lo_thin,  ymax=hi_thin,  color=series), linewidth=0.52, show.legend=FALSE) +
+  geom_linerange(data=eg, aes(x, ymin=lo_thick, ymax=hi_thick, color=series), linewidth=1.4, show.legend=FALSE) +
+  geom_point(data=eg, aes(x, point, fill=ptfill), shape=21, size=2.85, stroke=0.7, color="black") +
+  { if (show_values) geom_text(data=eg, aes(x + 0.025, y_hi-0.24, label=vlab), size=2.8, color="grey12", fontface="bold") } +
+  { if (show_psink)  geom_text(data=eg, aes(x + 0.025, y_hi-0.37, label=plab), parse=TRUE, size=2.85, color="#3F7361") } +
+  
+  scale_color_manual(values=series_pal, name=NULL, breaks=series_levels) +
+  scale_x_continuous(breaks=period_x, labels=names(period_x), limits=c(x_lo, x_hi), expand=c(0,0)) +
+  scale_y_continuous(limits=c(y_lo, y_hi), breaks=seq(-0.5,1.5,0.5), expand=c(0,0)) +
+  labs(x=NULL, y=expression("SOC sink ("*Pg~C~yr^{-1}*")")) +
+  guides(color=guide_legend(override.aes=list(shape=16, size=2.6, alpha=1))) +
+  theme_classic(base_size=10) +
+  theme(axis.line=element_line(color="grey30", linewidth=0.4),
+        axis.ticks=element_line(color="grey30", linewidth=0.4),
+        axis.text=element_text(color="grey10", size=9.5),
+        axis.title.y=element_text(size=10.5, margin=margin(r=5)),
+        legend.position="bottom", legend.text=element_text(size=9.5),
+        legend.key.width=unit(1.1,"lines"), plot.margin=margin(7,8.5,3.5,7))
 
-# plot each regions
-unique(regional_combined_bt_all_decades$pan_region_new2)
+p
 
-change_africa <- plot_annualChange("Africa")
-change_alaska <- plot_annualChange("Alaska")
-change_asianrussia <- plot_annualChange("Asian Russia")
-change_australia <- plot_annualChange("Australia")
-change_canada <- plot_annualChange("Canada")
-change_china <- plot_annualChange("China")
-change_us <- plot_annualChange("Continental United States")
-change_europe <- plot_annualChange("Europe")
-change_eurussia <- plot_annualChange("European Russia")
-change_japankorea <- plot_annualChange("Japan and Korea")
-change_mexico <- plot_annualChange("Mexico and Central America")
-change_nz <- plot_annualChange("New Zealand")
-change_northeu <- plot_annualChange("Northern Europe")
-change_othertemp <- plot_annualChange("Other temperate")
-change_others <- plot_annualChange("Others")
-change_southamerica <- plot_annualChange("South America")
-change_southasia <- plot_annualChange("South Asia")
-change_southeastasia <- plot_annualChange("Southeast Asia")
-
-#
-ggsave("./figures/Fig2_africa.png", change_africa, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_alaska.png", change_alaska, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_asianrussia.png", change_asianrussia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_australia.png", change_australia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_canada.png", change_canada, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_china.png", change_china, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_us.png", change_us, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_europe.png", change_europe, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_eurussia.png", change_eurussia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_japankorea.png", change_japankorea, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_mexico.png", change_mexico, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_nz.png", change_nz, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_northeu.png", change_northeu, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_othertemp.png", change_othertemp, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_others.png", change_others, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_southamerica.png", change_southamerica, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_southasia.png", change_southasia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-ggsave("./figures/Fig2_southeastasia.png", change_southeastasia, bg="transparent", dpi = 600, width=0.8, height=1.65, units="in")
-
-# figure is assembled and exported in Powerpoint
+ggsave("./figures/Fig2_2026September.png", p, width=W_CM, height=H_CM, units="cm", dpi=450, bg="white")
