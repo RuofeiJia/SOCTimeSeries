@@ -334,94 +334,106 @@ p_d <- ggplot() +
 p_d
 
 ## ---- PANEL e: signal by the 3 classes ----
-## (light) so the significant positive mean reads clearly against the spread. --
 
-summ_e <- plot_rate %>% 
+summ_e <- plot_rate %>%
   mutate(cond = factor(cond, levels = rev(c("grassland","young forest","old forest")))) %>%
   group_by(cond) %>%
-  dplyr::summarise(n = n(), 
-                   # interquartile range
-                   q25 = weighted.quantile(rate_val, .25, weight), 
+  dplyr::summarise(n = n(),
+                   q25 = weighted.quantile(rate_val, .25, weight),
                    q75 = weighted.quantile(rate_val, .75, weight),
                    median = weighted.quantile(rate_val, .5, weight),
-                   # weighted mean
                    mean = weighted.mean(rate_val, weight),
                    s = list(boot_ci(rate_val, weight)),
                    .groups = "drop") %>%
-  mutate(
-    lo = map_dbl(s, "lo"), hi = map_dbl(s, "hi"), sig = lo > 0 | hi < 0
-  ) %>% dplyr::select(-s)
+  mutate(lo = map_dbl(s, "lo"), hi = map_dbl(s, "hi"), sig = lo > 0 | hi < 0) %>%
+  dplyr::select(-s)
 
-# summary of all predicted pixel level SOC change at decadal scale
+# mentioned in main text: 
+# Across 4,883 forest and grassland sites, SOC stocks increased at an average rate of
+# 0.69 [95% confidence interval: 0.49, 0.89] Mg C ha-1 yr-1 in the top 30 cm.
+summ_all <- plot_rate %>%
+  dplyr::summarise(n = n(),
+                   q25 = weighted.quantile(rate_val, .25, weight),
+                   q75 = weighted.quantile(rate_val, .75, weight),
+                   median = weighted.quantile(rate_val, .5, weight),
+                   mean = weighted.mean(rate_val, weight),
+                   s = list(boot_ci(rate_val, weight)),
+                   .groups = "drop") %>%
+  mutate(lo = map_dbl(s, "lo"), hi = map_dbl(s, "hi"), sig = lo > 0 | hi < 0,
+         cond = "all") %>%
+  dplyr::select(-s)
+
+# --- predicted rates ---
 rates_yf_pred <- rbind(summary_youngforest1990, summary_youngforest2000,
                        summary_youngforest2010) %>%
   select(decade, type, region_display, annual_mean)
-
 rates_of_pred <- rbind(summary_oldforest1990, summary_oldforest2000,
                        summary_oldforest2010) %>%
   select(decade, type, region_display, annual_mean)
-
-rates_g_pred <- rbind(summary_grassland1990, summary_grassland2000,
-                      summary_grassland2010) %>%
+rates_g_pred  <- rbind(summary_grassland1990, summary_grassland2000,
+                       summary_grassland2010) %>%
   select(decade, type, region_display, annual_mean)
 
-tic()
-predicted_decdal_rates <- rbind(rates_yf_pred,rates_of_pred,rates_g_pred) %>%
-  rename(cond=type) %>%
+predicted_decadal_rates <- rbind(rates_yf_pred, rates_of_pred, rates_g_pred) %>%
+  rename(cond = type) %>%
   group_by(cond) %>%
-  summarize(mean = mean(annual_mean),
-            s = list(boot_ci(annual_mean, rep(1,n()) )),
-            q25 = quantile(annual_mean, .25),
+  summarize(mean   = mean(annual_mean),
+            q25    = quantile(annual_mean, .25),
             median = quantile(annual_mean, .5),
-            q75 = quantile(annual_mean, .75)) %>%
-  mutate(
-    lo = map_dbl(s, "lo"), hi = map_dbl(s, "hi"), sig = lo > 0 | hi < 0
-  ) %>%
-  select(-s)
-toc()
+            q75    = quantile(annual_mean, .75))
 
+# --- Site number per land cover ---
+site_number <- df_std %>%
+  group_by(forest_cond_gf_besnard60) %>%
+  summarize(site_n = n_distinct(siteID)) %>%
+  rename(cond = forest_cond_gf_besnard60)
+
+# Join site_n into summ_plot for annotation
+summ_e <- summ_e %>%
+  left_join(site_number, by = "cond")
+
+# --- Plot ---
 p_e <- ggplot(summ_e, aes(y = cond)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey55") +
+  
+  # Observed IQR + median + CI + mean diamond
   geom_linerange(aes(xmin = q25, xmax = q75, color = cond), linewidth = 5.2, alpha = 0.35) +
-  geom_linerange(aes(xmin = median-0.01, xmax = median+0.01, color = cond), linewidth = 5.2, alpha = 1) +
+  geom_linerange(aes(xmin = median - 0.01, xmax = median + 0.01, color = cond), linewidth = 5.2, alpha = 1) +
   geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0, linewidth = 1.3, color = "black") +
   geom_point(aes(x = mean, fill = cond), shape = 23, size = 4.8, color = "black", stroke = 0.95) +
   geom_text(aes(x = mean, label = sprintf("%+.2f%s", mean, ifelse(sig, " *", ""))),
             vjust = -1.5, size = 4.0, color = "grey20") +
   
-  # Add predicted rate crosses (horizontal line = IQR range)
-  geom_linerange(data = predicted_decdal_rates, aes(y = cond, xmin = q25, xmax = q75, color=cond), 
-                 linewidth = 2, linetype = "solid", alpha=0.35,
+  # Site number annotation below each y-axis tick label
+  geom_text(aes(x = -Inf, label = sprintf("(%d sites)", site_n)),
+            hjust = 1.08, vjust = 2.4, size = 3.3, color = "grey40") +
+  
+  # Predicted IQR + median + mean diamond (nudged below)
+  geom_linerange(data = predicted_decadal_rates,
+                 aes(y = cond, xmin = q25, xmax = q75, color = cond),
+                 linewidth = 2, alpha = 0.35,
                  position = position_nudge(y = -0.3)) +
-  # Vertical line at median 
-  geom_linerange(data = predicted_decdal_rates, 
-                 aes(y = cond, xmin = median - 0.01, xmax = median + 0.01, color=cond), 
-                 linewidth = 2, alpha=1,
+  geom_linerange(data = predicted_decadal_rates,
+                 aes(y = cond, xmin = median - 0.01, xmax = median + 0.01, color = cond),
+                 linewidth = 2, alpha = 1,
                  position = position_nudge(y = -0.3)) +
-  # diamond at mean
-  geom_errorbarh(data = predicted_decdal_rates,
-                 aes(xmin = lo, xmax = hi,), height = 0, linewidth = 0.7, color = "black",
-                 position = position_nudge(y = -0.3)) +
-  geom_point(data = predicted_decdal_rates,
+  geom_point(data = predicted_decadal_rates,
              aes(x = mean, fill = cond), shape = 23, size = 1, color = "black", stroke = 0.4,
              position = position_nudge(y = -0.3)) +
-  
-  # predicted mean annotation
-  geom_text(data = predicted_decdal_rates, 
-            aes(x = q75, label = paste0(sprintf("%+.2f", mean)," *"), color=cond),
+  geom_text(data = predicted_decadal_rates,
+            aes(x = q75, label = sprintf("%+.2f", mean), color = cond),
             vjust = 0.5, hjust = -0.1, size = 3.5,
             position = position_nudge(y = -0.3)) +
   
-  # Add "Observed" annotation
+  # "Observed" / "Predicted" labels anchored to the "grassland" row at the top
   geom_text(data = summ_e %>% filter(cond == "grassland"),
             aes(x = q25, y = cond, label = "Observed"),
-            vjust = -1.2, hjust = 0, size = 4.2, color = "black") +  
-  
-  # Add "Predicted" annotation
-  geom_text(data = predicted_decdal_rates %>% filter(cond == "grassland"),
+            vjust = -1.2, hjust = 0, size = 4.2, color = "black") +
+  geom_text(data = predicted_decadal_rates %>% filter(cond == "grassland"),
             aes(x = q25, y = cond, label = "Predicted"),
             vjust = 0.5, hjust = 1.15, size = 3.2, color = "black",
             position = position_nudge(y = -0.3)) +
+  
   scale_color_manual(values = class_cols, guide = "none") +
   scale_fill_manual(values = class_cols, guide = "none") +
   scale_y_discrete(expand = expansion(add = c(0.5, 0.9))) +
@@ -432,7 +444,6 @@ p_e <- ggplot(summ_e, aes(y = cond)) +
         axis.text.y = element_text(size = 11))
 
 p_e
-
 ## ---- assemble (AAAA / BBCC / DDEE): map (a) full-width banner on top; then
 ##   b temporal | c coverage ; d niche | e signal. free() lets the map ignore
 ##   the lower panels' axis-label margins and fill the full width. ----
