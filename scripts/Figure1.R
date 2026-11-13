@@ -231,45 +231,7 @@ p_b <- p_b + inset_element(p_inset, left = 0.03, bottom = 0.52, right = 0.42,
                            top = 0.98, ignore_tag = TRUE)
 
 p_b
-## ---- PANEL c: in-domain coverage per biome ----
-# % of each biome's area that falls within the upscaling model's predictor range.
-# manually input % of each biome's area within the model domain
-domain_pct <- c(
-  "Boreal · grassland"    = 14, "Boreal · young forest"    = 48, "Boreal · old forest"    = 34,
-  "Temperate · grassland" = 35, "Temperate · young forest" = 59, "Temperate · old forest" = 72,
-  "Tropical · grassland"  = 13, "Tropical · young forest"  = 26, "Tropical · old forest"  = 11)
-
-# order boreal -> temperate -> tropical (top to bottom), grassland -> young -> old within each
-biome_order <- c("Boreal · grassland","Boreal · young forest","Boreal · old forest",
-                 "Temperate · grassland","Temperate · young forest","Temperate · old forest",
-                 "Tropical · grassland","Tropical · young forest","Tropical · old forest")
-
-cov_long <- tibble(
-  biome = rep(names(domain_pct), 2),
-  part  = rep(c("in","out"), each = length(domain_pct)),
-  pct   = c(unname(domain_pct), 100 - unname(domain_pct))) %>%
-  mutate(biome = factor(biome, levels = rev(biome_order)),
-         part  = factor(part, levels = c("out","in")))
-
-# out-of-domain drawn with hatched = excluded from the result
-p_c <- ggplot(cov_long, aes(x = pct, y = biome, fill = part, pattern = part)) +
-  geom_col_pattern(width = 0.7, color = "grey70", linewidth = 0.2,
-                   pattern_fill = "grey55", pattern_colour = NA, pattern_angle = 45,
-                   pattern_density = 0.12, pattern_spacing = 0.017,
-                   pattern_key_scale_factor = 0.4) +
-  scale_fill_manual(values = c(`in` = GLOBAL, out = "grey90"),
-                    labels = c(`in` = "in-domain", out = "out of domain (excluded)"), name = NULL) +
-  scale_pattern_manual(values = c(`in` = "none", out = "stripe"),
-                       labels = c(`in` = "in-domain", out = "out of domain (excluded)"), name = NULL) +
-  scale_x_continuous(expand = expansion(mult = c(0, 0.02))) +
-  labs(x = "% of biome area within model domain", y = NULL, tag = "c") +
-  theme_minimal(base_size = 11) + TAG +
-  theme(legend.position = "top", legend.text = element_text(size = 9.5),
-        legend.key.size = unit(0.35, "cm"), axis.text.y = element_text(size = 10),
-        plot.margin = margin(2, 8, 2, 4), panel.grid.minor = element_blank())
-p_c
-
-## ---- PANEL d: climate niche (MAT x MAP, Whittaker-style) ----
+## ---- PANEL c: climate niche (MAT x MAP, Whittaker-style) ----
 # sampling plots by class = the clipimate space the DATA cover, over the classic
 # Whittaker biome envelopes. No domain shading here: this panel shows where the
 
@@ -318,7 +280,7 @@ whit_lab <- whit %>% group_by(biome) %>%
                          biome=="Tundra" ~ 400,
                          TRUE ~ MAP))
 
-p_d <- ggplot() +
+p_c <- ggplot() +
   geom_polygon(data = whit, aes(temp_c, MAP_mm, group = biome),
                fill = NA, color = "grey55", linewidth = 0.25) +
   geom_point(data = site_env2, aes(MAT, MAP, color = cond), size = 0.75, alpha = 0.6) +
@@ -326,12 +288,51 @@ p_d <- ggplot() +
             color = "grey25", lineheight = 0.78, fontface = "italic") +
   scale_color_manual(values = class_cols, guide = "none") +
   coord_cartesian(xlim = c(-8, 29), ylim = c(0, 4100)) + # zoom out so high-MAP (Amazon) points are not truncated
-  labs(x = "MAT (°C)", y = "MAP (mm)", tag = "d") +
+  labs(x = "MAT (°C)", y = "MAP (mm)", tag = "c") +
   theme_minimal(base_size = 12) + TAG +
   theme(plot.margin = margin(2, 10, 2, 6), panel.grid.minor = element_blank(),
         axis.text.y = element_text(size = 11))
 
-p_d
+p_c
+
+## ---- PANEL d: in-domain coverage per biome ----
+# % of each biome's area that falls within the upscaling model's predictor range.
+# manually input % of each biome's area within the model domain
+domain_pct <- c(
+  "Boreal · grassland"    = 14, "Boreal · young forest"    = 48, "Boreal · old forest"    = 34,
+  "Temperate · grassland" = 35, "Temperate · young forest" = 59, "Temperate · old forest" = 72,
+  "Tropical · grassland"  = 13, "Tropical · young forest"  = 26, "Tropical · old forest"  = 11)
+
+# order boreal -> temperate -> tropical (top to bottom), grassland -> young -> old within each
+biome_order <- c("Boreal · grassland","Boreal · young forest","Boreal · old forest",
+                 "Temperate · grassland","Temperate · young forest","Temperate · old forest",
+                 "Tropical · grassland","Tropical · young forest","Tropical · old forest")
+
+cov_long <- tibble(
+  biome = rep(names(domain_pct), 2),
+  part  = rep(c("in","out"), each = length(domain_pct)),
+  pct   = c(unname(domain_pct), 100 - unname(domain_pct))) %>%
+  mutate(biome = factor(biome, levels = rev(biome_order)),
+         part  = factor(part, levels = c("out","in")))
+
+# out-of-domain drawn with hatched = excluded from the result
+p_d <- ggplot(cov_long, aes(x = pct, y = biome, fill = part, pattern = part)) +
+  geom_col_pattern(width = 0.7, color = "grey70", linewidth = 0.2,
+                   pattern_fill = "grey55", pattern_colour = NA, pattern_angle = 45,
+                   pattern_density = 0.12, pattern_spacing = 0.017,
+                   pattern_key_scale_factor = 0.4) +
+  scale_fill_manual(values = c(`in` = GLOBAL, out = "grey90"),
+                    labels = c(`in` = "in-domain", out = "out of domain (excluded)"), name = NULL) +
+  scale_pattern_manual(values = c(`in` = "none", out = "stripe"),
+                       labels = c(`in` = "in-domain", out = "out of domain (excluded)"), name = NULL) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "% of biome area within model domain", y = NULL, tag = "d") +
+  theme_minimal(base_size = 11) + TAG +
+  theme(legend.position = "top", legend.text = element_text(size = 9.5),
+        legend.key.size = unit(0.35, "cm"), axis.text.y = element_text(size = 10),
+        plot.margin = margin(2, 8, 2, 4), panel.grid.minor = element_blank())
+p_c
+
 
 ## ---- PANEL e: signal by the 3 classes ----
 
@@ -444,10 +445,11 @@ p_e <- ggplot(summ_e, aes(y = cond)) +
         axis.text.y = element_text(size = 11))
 
 p_e
-## ---- assemble (AAAA / BBCC / DDEE): map (a) full-width banner on top; then
-##   b temporal | c coverage ; d niche | e signal. free() lets the map ignore
+
+## ---- assemble (AAAA / BBDD / CCEE): map (a) full-width banner on top; then
+##   b temporal | c niche; d coverage | e signal.
 ##   the lower panels' axis-label margins and fill the full width. ----
-design <- "AAAA\nBBCC\nDDEE"
+design <- "AAAA\nBBDD\nCCEE"
 fig1 <- free(p_a, type = "space", side = "lr") + p_b + p_c + p_d + p_e +
   plot_layout(design = design, heights = c(2.5, 1, 1.2))
 

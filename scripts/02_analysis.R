@@ -47,7 +47,7 @@ try(
       t2(std_year, std_MAT_cru, by = forest_cond_gf_besnard60, k=5, m=1) + 
       t2(std_year, std_MAP_cru, by = forest_cond_gf_besnard60, k=5, m=1) + 
       forest_cond_gf_besnard60 +
-      s(std_year, by = std_n_pct_plo, k=5) + 
+      s(std_year, by = std_n_pct_plo, k=5) + # comment out this line for sensitivity analysis of model without soil N
       s(std_year, by = std_clay_plo, k=5) + 
       s(std_year, by = std_ph_plo, k=5) +
       (1 | siteID) + (1 | plotID),
@@ -75,7 +75,7 @@ tic(); print("start: saving brms model")
 save(brms1, file="./results/brms1_new_timeseries_cmd_3chain26k_50thin.rda")
 toc(); print("done: withOneTime_brms1 saved to ../results/brms1_new_timeseries_cmd_3chain26k_50thin.rda")
 
-#-------------- 4. model diagnostics -------------------------------------------
+#-------------- 3. model diagnostics -------------------------------------------
 library(rstan) # for check_hmc_diagnostics()
 library(bayesplot) # for pp_check
 library(ggplot2)
@@ -114,3 +114,32 @@ print("start: conditional r squared"); tic()
 r_squared_cond <- bayes_R2(brms1, re.form=NULL)
 r_squared_cond
 print("done: conditional r squared"); toc()
+#-------------- 4. sensitivity analysis with soil N ----------------------------
+# model without soil N term was run with code in section 2 without the term 
+# s(std_year, by = std_n_pct_plo, k=5)
+
+# load model with and without soil N
+load("./results/brms1_new_timeseries_cmd_3chain26k_50thin.rda")
+brms_mod <- brms1; rm(brms1)
+load("./results/brms1_new_timeseries_cmd_3chain26k_50thin_noN.rda")
+brms_mod_noN <- brms1; rm(brms1)
+
+model_name_list <- c("natural soil N","no soil N")
+
+# add criteria to the models
+tic()
+brms_mod <- add_criterion(brms_mod, "waic")
+brms_mod_noN <- add_criterion(brms_mod_noN, "waic")
+toc() # 30 sec
+
+loo_compare(brms_mod, brms_mod_noN,
+            criterion = "waic", 
+            model_names = model_name_list
+)
+# elpd_diff se_diff
+# natural soil N    0.0       0.0 
+# no soil N      -130.3      20.6 
+
+# SOC sink estimates from the model without soil N is not shown in the repo
+# The total SOC sink estimate was reported in Methods
+# It was run with the same scripts from this repo, but with the model without soil N
