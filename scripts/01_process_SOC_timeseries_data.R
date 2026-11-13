@@ -1184,26 +1184,6 @@ df_model <- df_model %>%
 # save(df_model, file="./data/df_model_2024Jul09.rda")
 
 
-# # add in time series data (generated from 01_process_onetime_data.R in GlobalSOCChange)
-# load("/Users/jiaruofei/MIT Dropbox/Ruofei Jia/Exploration_analysis/GlobalSOCChange/data/SOC_TimeSeries_and_OneTime_for_analysis_2025Jul14.rda")
-# # rename
-# df_previous <- df_std_withOneTime; rm(df_std_withOneTime)
-# # delete standardized columns
-# df_previous <- df_previous %>%
-#   dplyr::select(-starts_with("std_"))
-# 
-# ## rbind time series data with 
-# # select same columns of df_timeseries in df_onetime
-# df_newTimeSeries_select <- df_newTimeSeries %>% 
-#   dplyr::select(colnames(df_previous))
-# 
-# identical(colnames(df_previous), colnames(df_newTimeSeries_select)) # TRUE
-# 
-# # rbind into entire df with time series and one time data, to be standardized together
-# df_unstd <- rbind(df_previous, df_newTimeSeries_select)
-# 
-# sapply(df_unstd, function(x) sum(is.na(x)))
-
 # standardize
 df_std <- df_model %>%  
   mutate( # standardize
